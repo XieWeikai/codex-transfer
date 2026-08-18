@@ -51,3 +51,17 @@ There is no transaction spanning arbitrary JSONL files and multiple SQLite datab
 - Backup directories and manifests use user-only permissions where supported.
 - The browser never receives provider credentials or rollout message contents.
 
+## Interface model
+
+The interface is a single operational workbench rather than a sequence of informational pages:
+
+- The provider rail is the classification seam. It filters the session inventory and exposes counts without changing selection state.
+- The session inventory is the selection seam. Search, status filters, sorting, click-to-add, and drag-to-add all produce the same queue state.
+- The migration panel is the action seam. It keeps the target, queue, preflight, and execution controls together.
+- The operations drawer is the recovery seam. It exposes backup generations, audit-chain status, operation results, and restore actions without replacing the current selection context.
+
+Drag is progressive enhancement, not a requirement. Every draggable session has a click alternative; native form controls and focus order provide a keyboard path. Motion is reduced when the operating system requests it.
+
+Risk guidance is contextual. Migration warnings are shown only after preflight and before execution; restore warnings are shown when restore is requested. Both flows require an acknowledgement plus an explicit confirmation phrase (`MIGRATE` or `RESTORE`). The execute control stays disabled until those conditions and the server-side preflight result are satisfied.
+
+The visual system uses neutral graphite surfaces for dense operational data, green for the primary migration path, amber for cautions, red for destructive or blocked states, and blue/cyan only for secondary information. Layout decisions came from the actual provider-to-session-to-operation workflow; the installed `ui-ux-pro-max` skill supplied accessibility, interaction-target, typography, responsiveness, and reduced-motion checks rather than dictating an unrelated page template.

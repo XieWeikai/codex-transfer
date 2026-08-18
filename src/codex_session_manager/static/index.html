@@ -3,108 +3,189 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Codex Session Manager</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body data-token="__CSRF_TOKEN__">
-  <header class="topbar">
-    <div>
-      <h1>Codex Session Manager</h1>
-      <p id="homePath">正在读取 Codex 数据...</p>
+  <a class="skip-link" href="#sessionWorkspace">跳到会话工作台</a>
+
+  <header class="app-header">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
+      <div>
+        <h1>Codex Session Manager</h1>
+        <p id="homePath">正在连接本地 Codex 存储</p>
+      </div>
     </div>
-    <div class="health" id="health"><span></span> 检查中</div>
+    <div class="header-actions">
+      <div class="health-pill" id="health"><span></span><strong>检查中</strong></div>
+      <button class="button button-quiet" id="openHistory" type="button">
+        操作记录 <span class="count-badge" id="operationCount">0</span>
+      </button>
+      <button class="icon-button" id="refreshButton" type="button" aria-label="刷新会话" title="刷新会话">↻</button>
+    </div>
   </header>
 
-  <nav class="tabs" aria-label="主要视图">
-    <button class="tab active" data-view="migrate">迁移会话</button>
-    <button class="tab" data-view="history">操作与恢复</button>
-    <button class="tab" data-view="safety">安全说明</button>
-  </nav>
+  <main class="app-shell" id="sessionWorkspace">
+    <aside class="provider-sidebar" aria-label="Provider 分类">
+      <div class="sidebar-heading">
+        <span>PROVIDERS</span>
+        <strong id="providerCount">0</strong>
+      </div>
+      <nav id="providerList" class="provider-list"></nav>
+      <div class="sidebar-foot">
+        <span class="status-dot success"></span>
+        <div><strong>只在本机运行</strong><small>凭据不会进入浏览器</small></div>
+      </div>
+    </aside>
 
-  <main>
-    <section id="migrate" class="view active">
-      <div class="workflow">
-        <section class="session-pane">
-          <div class="section-head">
-            <div>
-              <span class="step">1</span>
-              <h2>选择来源会话</h2>
-            </div>
-            <button id="refreshButton" class="secondary">刷新</button>
-          </div>
-          <div class="filters">
-            <input id="search" type="search" placeholder="搜索标题、目录或 ID" aria-label="搜索会话">
-            <select id="sourceProvider" aria-label="来源 provider"></select>
-          </div>
-          <div class="selection-bar">
-            <label><input type="checkbox" id="selectAll"> 选择当前列表</label>
-            <strong id="selectedCount">已选 0 个</strong>
-          </div>
-          <div id="sessionList" class="session-list" aria-live="polite"></div>
-        </section>
+    <section class="session-workspace">
+      <div class="workspace-titlebar">
+        <div>
+          <div class="eyebrow"><span id="currentProviderDot"></span><span id="currentProviderLabel">全部会话</span></div>
+          <h2>Session 工作台</h2>
+        </div>
+        <div class="workspace-summary">
+          <span><strong id="visibleCount">0</strong> 条可见</span>
+          <span><strong id="selectedCount">0</strong> 条待迁移</span>
+        </div>
+      </div>
 
-        <aside class="action-pane">
-          <div class="section-head">
-            <div><span class="step">2</span><h2>预检与执行</h2></div>
-          </div>
-          <label class="field">目标 provider
-            <select id="targetProvider"></select>
-          </label>
-          <button id="previewButton" class="primary full">运行迁移预检</button>
+      <div class="toolbar" role="search">
+        <label class="search-control">
+          <span aria-hidden="true">⌕</span>
+          <input id="search" type="search" placeholder="搜索标题、工作目录或 Session ID" aria-label="搜索会话">
+          <kbd>⌘ K</kbd>
+        </label>
+        <label class="select-control">
+          <span>排序</span>
+          <select id="sortSessions" aria-label="会话排序">
+            <option value="recent">最近更新</option>
+            <option value="oldest">最早更新</option>
+            <option value="title">标题 A–Z</option>
+            <option value="size">文件大小</option>
+          </select>
+        </label>
+      </div>
 
-          <div id="previewEmpty" class="empty-state">
-            预检不会修改任何文件。通过后才会显示执行入口。
-          </div>
-          <div id="previewResult" hidden>
-            <div class="summary-grid">
-              <div><span>会话</span><strong id="planCount">0</strong></div>
-              <div><span>预计备份</span><strong id="planSize">0 B</strong></div>
-            </div>
-            <div id="riskList" class="risk-list"></div>
-            <label class="field confirm-field">确认口令
-              <input id="migrateAck" autocomplete="off" placeholder="输入 MIGRATE">
-            </label>
-            <button id="migrateButton" class="danger full" disabled>备份并迁移</button>
-          </div>
-        </aside>
+      <div class="filter-row">
+        <div class="segmented" aria-label="会话状态筛选">
+          <button type="button" class="segment active" data-filter="all" aria-pressed="true">全部</button>
+          <button type="button" class="segment" data-filter="ready" aria-pressed="false">可迁移</button>
+          <button type="button" class="segment" data-filter="locked" aria-pressed="false">使用中</button>
+          <button type="button" class="segment" data-filter="archived" aria-pressed="false">已归档</button>
+        </div>
+        <label class="select-all"><input type="checkbox" id="selectAll"> 选择当前结果</label>
+      </div>
+
+      <div class="session-table" role="region" aria-label="Session 列表" tabindex="0">
+        <div class="table-head" aria-hidden="true">
+          <span></span><span>SESSION</span><span>MODEL / WORKSPACE</span><span>UPDATED</span><span>SIZE</span><span></span>
+        </div>
+        <div id="sessionList" class="session-list" aria-live="polite"></div>
       </div>
     </section>
 
-    <section id="history" class="view">
-      <div class="section-head history-head">
-        <div><h2>操作账本</h2><p>每次迁移和恢复都保留独立备份、SHA-256 清单与哈希链事件。</p></div>
-        <button id="historyRefresh" class="secondary">刷新</button>
+    <aside class="transfer-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="panel-kicker">TRANSFER QUEUE</span>
+          <h2>迁移投放区</h2>
+        </div>
+        <button class="text-button" type="button" id="clearSelection">清空</button>
       </div>
-      <div id="operations" class="operations"></div>
-    </section>
 
-    <section id="safety" class="view safety">
-      <h2>迁移改变什么</h2>
-      <p>工具只修改所选会话 rollout 中的 <code>session_meta.payload.model_provider</code>，以及 Codex SQLite <code>threads.model_provider</code>。它不会复制或修改 provider 凭据、API Key、OAuth 登录、<code>config.toml</code> 或模型设置。</p>
-      <div class="safety-grid">
-        <article><h3>并发写入</h3><p>正在运行的 Codex 会继续写入 session。检测到 writer lock 时迁移会被阻止；仍建议先完全退出相关 Codex 任务。</p></article>
-        <article><h3>兼容性</h3><p>目标 provider 可能不支持原会话使用的模型、Responses API、工具调用、图片输入或 reasoning effort。迁移只影响会话可见性，不保证可继续推理。</p></article>
-        <article><h3>版本变化</h3><p>Codex 的本地存储不是稳定公开接口。升级 Codex 后应先预检；无法识别的数据库结构会停止操作，而不是猜测写入。</p></article>
-        <article><h3>恢复限制</h3><p>恢复前会比对迁移完成时的哈希。只要 Codex 又写过这些文件，恢复就会被阻止，防止覆盖新消息。此时应从备份人工合并。</p></article>
-        <article><h3>备份敏感性</h3><p>rollout 可能包含提示词、文件路径、工具输出和代码。备份目录权限受限，但仍应像源代码和聊天记录一样保护，不要上传到公共仓库。</p></article>
-        <article><h3>进程崩溃</h3><p>写入采用同目录原子替换，SQLite 使用事务。任何捕获到的失败会自动回滚；若机器断电，可在操作账本中找到写入前完整快照。</p></article>
+      <label class="field-label" for="targetProvider">目标 provider</label>
+      <div class="target-select-wrap">
+        <select id="targetProvider"></select>
+        <span aria-hidden="true">↓</span>
       </div>
-    </section>
+
+      <div class="drop-zone" id="dropZone" role="region" aria-label="Session 拖拽投放区">
+        <div class="drop-icon" aria-hidden="true">⇢</div>
+        <strong>拖拽 Session 到这里</strong>
+        <span>或者点按列表右侧的“加入”</span>
+      </div>
+
+      <div class="queue-heading">
+        <span>待迁移</span><strong id="queueCount">0</strong>
+      </div>
+      <div id="transferQueue" class="transfer-queue"></div>
+
+      <div class="transfer-footer">
+        <dl class="transfer-stats">
+          <div><dt>来源</dt><dd id="sourceSummary">尚未选择</dd></div>
+          <div><dt>预计备份</dt><dd id="backupSummary">—</dd></div>
+        </dl>
+        <button id="previewButton" class="button button-primary button-block" type="button" disabled>
+          检查并迁移 <span aria-hidden="true">→</span>
+        </button>
+        <p class="panel-note">执行前将运行完整性与并发写入检查，并要求你确认风险。</p>
+      </div>
+    </aside>
   </main>
 
-  <dialog id="restoreDialog">
+  <div class="drawer-scrim" id="drawerScrim" hidden></div>
+  <aside class="history-drawer" id="historyDrawer" aria-labelledby="historyTitle" aria-hidden="true">
+    <div class="drawer-header">
+      <div><span class="panel-kicker">AUDIT TRAIL</span><h2 id="historyTitle">操作与恢复</h2></div>
+      <button class="icon-button" id="closeHistory" type="button" aria-label="关闭操作记录">×</button>
+    </div>
+    <p class="drawer-intro">每次迁移和恢复都保留完整快照、SHA-256 清单与哈希链事件。</p>
+    <div class="audit-health" id="auditHealth"><span></span><strong>审计链检查中</strong></div>
+    <div id="operations" class="operations"></div>
+  </aside>
+
+  <dialog id="migrationDialog" class="action-dialog">
     <form method="dialog">
-      <h2>恢复迁移前状态</h2>
-      <p>恢复会先备份当前状态，再用该操作的原始快照覆盖。若当前文件哈希已变化，系统会拒绝恢复。</p>
-      <label class="field">确认口令<input id="restoreAck" autocomplete="off" placeholder="输入 RESTORE"></label>
-      <div class="dialog-actions">
-        <button value="cancel" class="secondary">取消</button>
-        <button type="button" id="restoreConfirm" class="danger" disabled>创建快照并恢复</button>
+      <header class="dialog-header">
+        <div class="dialog-icon warning" aria-hidden="true">!</div>
+        <div><span class="panel-kicker">FINAL CHECK</span><h2>确认迁移风险</h2></div>
+        <button value="cancel" class="icon-button dialog-close" aria-label="关闭迁移确认">×</button>
+      </header>
+      <div class="route-preview">
+        <div><span>FROM</span><strong id="dialogSource">—</strong></div>
+        <span class="route-arrow" aria-hidden="true">→</span>
+        <div><span>TO</span><strong id="dialogTarget">—</strong></div>
+        <div class="route-count"><strong id="dialogCount">0</strong><span>SESSIONS</span></div>
       </div>
+      <div class="dialog-body">
+        <div class="preflight-status" id="preflightStatus" aria-live="polite"><span></span><strong>正在运行预检</strong></div>
+        <div id="riskList" class="risk-list"></div>
+        <label class="confirmation-check">
+          <input type="checkbox" id="compatibilityAck">
+          <span>我已确认目标 provider 已配置，并理解模型、工具及 API 模式可能不兼容。</span>
+        </label>
+        <label class="field-stack" for="migrateAck">
+          <span>输入 <code>MIGRATE</code> 确认</span>
+          <input id="migrateAck" autocomplete="off" spellcheck="false" placeholder="MIGRATE">
+        </label>
+      </div>
+      <footer class="dialog-footer">
+        <span id="dialogBackupSize">预计备份 —</span>
+        <div><button value="cancel" class="button button-quiet">取消</button><button type="button" id="migrateButton" class="button button-danger" disabled>创建备份并迁移</button></div>
+      </footer>
     </form>
   </dialog>
-  <div id="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="restoreDialog" class="action-dialog compact-dialog">
+    <form method="dialog">
+      <header class="dialog-header">
+        <div class="dialog-icon danger" aria-hidden="true">↶</div>
+        <div><span class="panel-kicker">RESTORE SNAPSHOT</span><h2>恢复迁移前状态</h2></div>
+        <button value="cancel" class="icon-button dialog-close" aria-label="关闭恢复确认">×</button>
+      </header>
+      <div class="dialog-body">
+        <div class="inline-warning"><strong>恢复可能覆盖当前状态</strong><p>系统会先备份当前数据。若文件自迁移后发生变化，恢复将自动被阻止，避免丢失新消息。</p></div>
+        <label class="confirmation-check"><input type="checkbox" id="restoreRiskAck"><span>我已关闭相关 Codex 任务，并理解恢复限制。</span></label>
+        <label class="field-stack" for="restoreAck"><span>输入 <code>RESTORE</code> 确认</span><input id="restoreAck" autocomplete="off" spellcheck="false" placeholder="RESTORE"></label>
+      </div>
+      <footer class="dialog-footer"><span id="restoreOperationLabel">—</span><div><button value="cancel" class="button button-quiet">取消</button><button type="button" id="restoreConfirm" class="button button-danger" disabled>备份当前状态并恢复</button></div></footer>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js"></script>
 </body>
 </html>
-
