@@ -193,8 +193,17 @@ class MigrationEngine:
         return MigrationPlan(source, target, sessions, risks, trace_profiles, db_size + rollout_size)
 
     def preview_fork(self, session_id: str, target_provider: str) -> MigrationPlan:
-        session = self.repository.sessions_by_id([session_id])[0]
-        plan = self.preview([session_id], session.provider, target_provider)
+        return self.preview_forks([session_id], target_provider)
+
+    def preview_forks(self, session_ids: list[str], target_provider: str) -> MigrationPlan:
+        if not session_ids:
+            raise MigrationError("Select at least one session")
+        sessions = self.repository.sessions_by_id(session_ids)
+        source_provider = sessions[0].provider
+        plan = self.preview(session_ids, source_provider, target_provider)
+        plan.estimated_backup_bytes = sum(
+            session.size_bytes + Path(session.db_path).stat().st_size for session in sessions
+        )
         plan.risks.append(
             Risk(
                 "info",
@@ -203,6 +212,15 @@ class MigrationEngine:
                 "新 Fork 仍可能无法在目标后端解密历史 encrypted_content；先验证新副本再继续工作。",
             )
         )
+        if len(sessions) > 1:
+            plan.risks.append(
+                Risk(
+                    "warning",
+                    "fork-batch-non-atomic",
+                    "批量 Fork 会逐条执行，每条操作都有独立备份和审计记录，但整批操作不是原子事务。",
+                    "如果中途失败，已完成的 Fork 会保留，未执行的条目会停止；请在操作记录中逐条核对或恢复。",
+                )
+            )
         return plan
 
     def fork(self, session_id: str, target_provider: str, acknowledgement: str) -> dict[str, Any]:

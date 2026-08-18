@@ -64,7 +64,7 @@ The default backup directory is `~/.codex-session-manager`. Keep it private: rol
 
 1. Stop the Codex tasks you intend to move. For the safest operation, quit Codex entirely.
 2. Choose **Fork** for the safer default, or **Move** when the original session must change provider.
-3. Add sessions by dragging or clicking **Add**, then choose the target provider.
+3. Select one or more session cards with the checkbox, card click, or drag gesture, then choose the target provider.
 4. Run preflight, resolve every critical finding, and enter `FORK` or `MIGRATE` as requested.
 5. Start Codex with the target provider and verify the session before deleting any backup.
 6. To revert, stop Codex again and use **操作与恢复**. Restore is blocked if the session changed after migration.

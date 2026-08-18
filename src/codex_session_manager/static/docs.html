@@ -67,6 +67,7 @@
         <h2>Fork 到另一个 Provider</h2>
         <p>Fork 使用 Codex 官方 <code>thread/fork</code> interface，并传入目标 <code>modelProvider</code>。Codex 负责历史复制、lineage、新 thread ID、rollout 与索引写入，Relay 负责前后快照、风险确认和审计。</p>
         <ol><li>确认源 Session 未被写入。</li><li>备份源 rollout 与一致性 SQLite 快照。</li><li>启动同一 <code>CODEX_HOME</code> 的短生命周期 app-server。</li><li>调用 <code>thread/fork</code>，验证新 thread 的 Provider 与路径。</li><li>记录新 rollout 哈希；未发生变化前允许撤销。</li></ol>
+        <div class="docs-callout warning"><strong>批量 Fork 不是原子事务</strong><p>多选后会逐条调用 <code>thread/fork</code>。每条都有独立备份和审计；中途失败时已完成的 Fork 会保留，剩余条目停止执行，需要在操作记录中逐条核对或恢复。</p></div>
         <div class="docs-callout warning"><strong>Fork 不是格式转换</strong><p>它保留历史中的 <code>encrypted_content</code>。目标后端仍可能无法解密，但源 Session 不受影响。</p></div>
       </article>
 

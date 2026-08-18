@@ -70,6 +70,10 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                 result = self.server.engine.preview_fork(
                     payload.get("session_id", ""), payload.get("target_provider", "")
                 ).to_dict()
+            elif path == "/api/forks/preview":
+                result = self.server.engine.preview_forks(
+                    payload.get("session_ids", []), payload.get("target_provider", "")
+                ).to_dict()
             elif path == "/api/fork":
                 result = self.server.engine.fork(
                     payload.get("session_id", ""),

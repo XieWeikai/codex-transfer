@@ -173,6 +173,29 @@ class MigrationEngineTest(unittest.TestCase):
         self.assertEqual(restored["status"], "completed")
         self.assertNotIn(forked_id, {session.id for session in self.engine.repository.scan_sessions()})
 
+    def test_multi_fork_preview_warns_that_batch_is_not_atomic(self) -> None:
+        second_rollout = self.rollout.with_name("rollout-session-2.jsonl")
+        second_rollout.write_text(
+            self.rollout.read_text(encoding="utf-8").replace("session-1", "session-2"),
+            encoding="utf-8",
+        )
+        with sqlite3.connect(self.db) as conn:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(threads)")]
+            select = ["?" if column in {"id", "rollout_path"} else column for column in columns]
+            conn.execute(
+                f"INSERT INTO threads ({', '.join(columns)}) "
+                f"SELECT {', '.join(select)} FROM threads WHERE id = ?",
+                ("session-2", str(second_rollout), "session-1"),
+            )
+        plan = self.engine.preview_forks(["session-1", "session-2"], "target")
+        self.assertTrue(plan.executable)
+        self.assertEqual(
+            plan.estimated_backup_bytes,
+            self.rollout.stat().st_size + second_rollout.stat().st_size + (2 * self.db.stat().st_size),
+        )
+        self.assertIn("source-preserved", {risk.code for risk in plan.risks})
+        self.assertIn("fork-batch-non-atomic", {risk.code for risk in plan.risks})
+
     def test_fork_undo_blocks_after_new_chat(self) -> None:
         fork = self.engine.fork("session-1", "target", "FORK")
         fork_path = Path(fork["created_files"][0]["source"])

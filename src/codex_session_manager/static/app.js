@@ -13,6 +13,7 @@ const state = {
   draggingId: null,
   pointerDrag: null,
   mouseDrag: null,
+  suppressCardClick: false,
 };
 
 const providerColors = ["#86d39a", "#e7b85c", "#7bb7d7", "#c797d8", "#dc8d69", "#a8c66c"];
@@ -119,9 +120,36 @@ function observedProviders() {
   return [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || a.localeCompare(b));
 }
 
+function projectLabel(path) {
+  if (!path) return "无 Project";
+  const normalized = path.replace(/[\\/]+$/, "");
+  return normalized.split(/[\\/]/).pop() || path;
+}
+
+function renderProjects() {
+  const select = $("#projectFilter");
+  const current = select.value;
+  const counts = new Map();
+  state.sessions
+    .filter(session => !state.activeProvider || session.provider === state.activeProvider)
+    .forEach(session => counts.set(session.cwd || "", (counts.get(session.cwd || "") || 0) + 1));
+  const projects = [...counts.keys()].sort((a, b) => projectLabel(a).localeCompare(projectLabel(b), "zh-CN"));
+  const labelCounts = new Map();
+  projects.forEach(project => labelCounts.set(projectLabel(project), (labelCounts.get(projectLabel(project)) || 0) + 1));
+  select.innerHTML = '<option value="__all__">全部 Project</option>' + projects.map(project => {
+    const parts = project.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+    const label = labelCounts.get(projectLabel(project)) > 1 ? parts.slice(-2).join("/") : projectLabel(project);
+    return `<option value="${escapeHtml(project)}">${escapeHtml(label)} · ${counts.get(project)}</option>`;
+  }
+  ).join("");
+  select.value = projects.includes(current) ? current : "__all__";
+  select.title = select.value === "__all__" ? "全部 Project" : select.value || "无 Project";
+}
+
 function renderAll() {
   renderActionMode();
   renderProviders();
+  renderProjects();
   renderTargets();
   renderSessions();
   renderQueue();
@@ -137,16 +165,16 @@ function renderActionMode() {
   });
   $("#actionKicker").textContent = fork ? "FORK QUEUE" : "MOVE QUEUE";
   $("#actionHeading").textContent = fork ? "Fork 工作区" : "移动工作区";
-  $("#dropTitle").textContent = fork ? "拖拽一个 Session 创建 Fork" : "拖拽 Session 到这里移动";
-  $("#dropHint").textContent = fork ? "原会话保持不变，也可以点按“加入”" : "原会话将切换归属，也可以点按“加入”";
+  $("#dropTitle").textContent = fork ? "拖拽 Session 创建 Fork" : "拖拽 Session 到这里移动";
+  $("#dropHint").textContent = fork ? "支持多选；每个 Fork 独立备份和审计" : "原会话将切换归属；点击卡片或复选框多选";
   $("#queueLabel").textContent = fork ? "待 Fork" : "待移动";
   $("#selectedLabel").textContent = fork ? "条待 Fork" : "条待移动";
   $("#previewButtonLabel").textContent = fork ? "检查并 Fork" : "检查并移动";
   $("#actionNote").textContent = fork
     ? "Fork 通过 Codex 官方 app-server 创建，并保留原会话。"
     : "移动会改写原会话归属；执行前会完整备份并要求确认。";
-  $("#selectAll").disabled = fork;
-  $("#selectAll").closest("label").title = fork ? "Fork 模式一次只处理一个 Session" : "";
+  $("#selectAll").disabled = false;
+  $("#selectAll").closest("label").title = "选择当前筛选结果中的可操作 Session";
 }
 
 function renderProviders() {
@@ -181,8 +209,10 @@ function renderTargets() {
 
 function visibleSessions() {
   const query = $("#search").value.trim().toLocaleLowerCase();
+  const project = $("#projectFilter").value;
   const sessions = state.sessions.filter(session => {
     if (state.activeProvider && session.provider !== state.activeProvider) return false;
+    if (project !== "__all__" && session.cwd !== project) return false;
     if (state.filter === "ready" && (session.locked || session.archived)) return false;
     if (state.filter === "locked" && !session.locked) return false;
     if (state.filter === "archived" && !session.archived) return false;
@@ -205,27 +235,51 @@ function renderSessions() {
   $("#selectAll").checked = sessions.length > 0 && sessions.every(session => state.selected.has(session.id));
   $("#selectAll").indeterminate = sessions.some(session => state.selected.has(session.id)) && !$("#selectAll").checked;
 
-  $("#sessionList").innerHTML = sessions.length ? sessions.map(session => {
+  $("#sessionList").innerHTML = sessions.length ? sessions.map((session, index) => {
     const selected = state.selected.has(session.id);
+    const detailId = `session-detail-${index}`;
     const chips = [
       session.locked ? '<span class="status-chip locked">使用中</span>' : "",
       session.archived ? '<span class="status-chip archived">已归档</span>' : "",
     ].join("");
-    return `<article class="session-row ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}">
-      <label class="session-check" aria-label="选择 ${escapeHtml(session.title)}"><input type="checkbox" ${selected ? "checked" : ""} ${session.locked ? "disabled" : ""}></label>
-      <div class="session-primary"><div class="session-title-line"><span class="session-title" title="${escapeHtml(session.title)}">${escapeHtml(session.title)}</span>${chips}</div><span class="session-id">${escapeHtml(session.id)}</span></div>
-      <div class="session-workspace-meta"><span class="session-model">${escapeHtml(session.model || "model unknown")}</span><span class="session-cwd" title="${escapeHtml(session.cwd)}">${escapeHtml(session.cwd || "无工作目录")}</span></div>
-      <time class="session-time">${formatDate(session.updated_at)}</time>
-      <span class="session-size">${formatBytes(session.size_bytes)}</span>
-      <button class="add-button ${selected ? "added" : ""}" type="button" ${session.locked ? "disabled" : ""}>${selected ? "移除" : "加入"}</button>
+    const status = session.locked ? "使用中" : session.archived ? "已归档" : "可操作";
+    return `<article class="session-card ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.title)}, Project ${escapeHtml(projectLabel(session.cwd))}" aria-describedby="${detailId}">
+      <div class="session-card-top">
+        <label class="session-check" aria-label="选择 ${escapeHtml(session.title)}"><input type="checkbox" ${selected ? "checked" : ""} ${session.locked ? "disabled" : ""}></label>
+        <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.title)} 的完整信息" aria-expanded="false" title="完整信息">i</button></div>
+      </div>
+      <strong class="session-card-title">${escapeHtml(session.title || "未命名 Session")}</strong>
+      <div class="session-project" title="${escapeHtml(session.cwd || "无 Project")}"><span aria-hidden="true">⌂</span>${escapeHtml(projectLabel(session.cwd))}</div>
+      <div class="session-card-foot"><span>${escapeHtml(session.model || "model unknown")}</span><time>${formatDate(session.updated_at)}</time></div>
+      <div class="session-detail-popover" id="${detailId}" role="tooltip">
+        <strong>${escapeHtml(session.title || "未命名 Session")}</strong>
+        <dl><div><dt>Session ID</dt><dd>${escapeHtml(session.id)}</dd></div><div><dt>Provider</dt><dd>${escapeHtml(session.provider)}</dd></div><div><dt>Model</dt><dd>${escapeHtml(session.model || "unknown")}</dd></div><div><dt>Project</dt><dd>${escapeHtml(session.cwd || "无工作目录")}</dd></div><div><dt>Updated</dt><dd>${formatDate(session.updated_at)}</dd></div><div><dt>Size / Status</dt><dd>${formatBytes(session.size_bytes)} · ${status}</dd></div></dl>
+      </div>
     </article>`;
-  }).join("") : '<div class="empty-state"><div><strong>没有匹配的 Session</strong><p>调整 provider、状态筛选或搜索关键词。</p></div></div>';
+  }).join("") : '<div class="empty-state"><div><strong>没有匹配的 Session</strong><p>调整 provider、Project、状态筛选或搜索关键词。</p></div></div>';
 
-  $$(".session-row").forEach(row => {
-    const id = row.dataset.id;
-    row.querySelector("input")?.addEventListener("change", event => setSessionSelected(id, event.target.checked));
-    row.querySelector(".add-button")?.addEventListener("click", () => setSessionSelected(id, !state.selected.has(id)));
-    setupPointerDrag(row, id);
+  $$(".session-card").forEach(card => {
+    const id = card.dataset.id;
+    card.querySelector("input")?.addEventListener("change", event => setSessionSelected(id, event.target.checked));
+    card.querySelector(".info-button")?.addEventListener("click", event => {
+      const open = card.classList.toggle("details-open");
+      event.currentTarget.setAttribute("aria-expanded", String(open));
+    });
+    card.addEventListener("keydown", event => {
+      if ((event.key === " " || event.key === "Enter") && event.target === card) {
+        event.preventDefault();
+        setSessionSelected(id, !state.selected.has(id));
+      }
+    });
+    card.addEventListener("click", event => {
+      if (event.target.closest("button, input, label, .session-detail-popover")) return;
+      if (state.suppressCardClick) {
+        state.suppressCardClick = false;
+        return;
+      }
+      setSessionSelected(id, !state.selected.has(id));
+    });
+    setupPointerDrag(card, id);
   });
 }
 
@@ -322,6 +376,7 @@ function finishMouseDrag(event) {
 
 function activateDragVisuals(drag) {
   drag.active = true;
+  state.suppressCardClick = true;
   state.draggingId = drag.id;
   drag.row.classList.add("dragging");
   const session = state.sessions.find(item => item.id === drag.id);
@@ -354,7 +409,6 @@ function setSessionSelected(id, selected) {
     toast(`一次迁移只能包含同一来源 provider。当前来源是 ${source}。`, true);
     return;
   }
-  if (selected && state.action === "fork") state.selected.clear();
   selected ? state.selected.add(id) : state.selected.delete(id);
   state.plan = null;
   renderTargets();
@@ -376,11 +430,10 @@ function renderQueue() {
   $("#backupSummary").textContent = state.plan
     ? formatBytes(state.plan.estimated_backup_bytes)
     : sessions.length ? `至少 ${formatBytes(sessions.reduce((sum, session) => sum + session.size_bytes, 0))}` : "—";
-  const invalidCount = state.action === "fork" ? sessions.length !== 1 : sessions.length === 0;
-  $("#previewButton").disabled = invalidCount || !$("#targetProvider").value;
+  $("#previewButton").disabled = sessions.length === 0 || !$("#targetProvider").value;
   $("#transferQueue").innerHTML = sessions.length ? sessions.map(session => `
     <div class="queue-item"><span></span><div><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.title)}">×</button></div>
-  `).join("") : '<div class="queue-empty">队列为空<br>拖入或点按“加入”开始</div>';
+  `).join("") : '<div class="queue-empty">队列为空<br>拖入或点击卡片开始</div>';
   $$(".queue-remove").forEach(button => button.addEventListener("click", () => setSessionSelected(button.dataset.id, false)));
 }
 
@@ -425,9 +478,9 @@ async function openMigrationDialog() {
   $("#migrateButton").disabled = true;
   dialog.showModal();
   try {
-    const previewPath = fork ? "/api/fork/preview" : "/api/preview";
+    const previewPath = fork ? "/api/forks/preview" : "/api/preview";
     const payload = fork
-      ? {session_id: sessions[0].id, target_provider: target}
+      ? {session_ids: sessions.map(session => session.id), target_provider: target}
       : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: target};
     state.plan = await api(previewPath, {method: "POST", body: JSON.stringify(payload)});
     const critical = state.plan.risks.filter(risk => risk.severity === "critical").length;
@@ -457,15 +510,44 @@ async function migrate() {
   const sessions = selectedSessions();
   try {
     const fork = state.action === "fork";
-    const path = fork ? "/api/fork" : "/api/migrate";
-    const payload = fork
-      ? {session_id: sessions[0].id, target_provider: $("#targetProvider").value, acknowledgement: $("#migrateAck").value}
-      : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: $("#targetProvider").value, acknowledgement: $("#migrateAck").value};
-    const result = await api(path, {method: "POST", body: JSON.stringify(payload)});
+    if (fork) {
+      const completed = [];
+      for (let index = 0; index < sessions.length; index += 1) {
+        $("#migrateButton").textContent = `正在 Fork ${index + 1}/${sessions.length}`;
+        try {
+          const result = await api("/api/fork", {
+            method: "POST",
+            body: JSON.stringify({
+              session_id: sessions[index].id,
+              target_provider: $("#targetProvider").value,
+              acknowledgement: $("#migrateAck").value,
+            }),
+          });
+          completed.push({session: sessions[index], operationId: result.operation_id});
+        } catch (error) {
+          completed.forEach(item => state.selected.delete(item.session.id));
+          $("#migrationDialog").close();
+          state.plan = null;
+          await load();
+          toast(`批量 Fork 已完成 ${completed.length}/${sessions.length}；失败于 ${sessions[index].title}：${error.message}`, true);
+          return;
+        }
+      }
+      $("#migrationDialog").close();
+      state.selected.clear();
+      state.plan = null;
+      toast(`已完成 ${completed.length} 个 Fork；每个操作均已独立备份并写入审计账本。`);
+      await load();
+      return;
+    }
+    const result = await api("/api/migrate", {
+      method: "POST",
+      body: JSON.stringify({session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: $("#targetProvider").value, acknowledgement: $("#migrateAck").value}),
+    });
     $("#migrationDialog").close();
     state.selected.clear();
     state.plan = null;
-    toast(`${fork ? "Fork" : "移动"}完成。操作 ${result.operation_id} 已备份并写入审计账本。`);
+    toast(`移动完成。操作 ${result.operation_id} 已备份并写入审计账本。`);
     await load();
   } catch (error) {
     toast(error.message, true);
@@ -548,27 +630,20 @@ function setupEvents() {
   $("#refreshButton").addEventListener("click", load);
   $("#themeSelect").addEventListener("change", event => applyTheme(event.target.value));
   $("#search").addEventListener("input", debounce(renderSessions, 120));
+  $("#projectFilter").addEventListener("change", event => { event.target.title = event.target.value === "__all__" ? "全部 Project" : event.target.value || "无 Project"; renderSessions(); });
   $("#sortSessions").addEventListener("change", renderSessions);
   $("#targetProvider").addEventListener("change", () => { state.plan = null; renderQueue(); });
   $("#clearSelection").addEventListener("click", () => { state.selected.clear(); state.plan = null; renderAll(); });
   $$(".action-mode").forEach(button => button.addEventListener("click", () => {
     state.action = button.dataset.action;
     state.plan = null;
-    if (state.action === "fork" && state.selected.size > 1) {
-      const first = state.selected.values().next().value;
-      state.selected = new Set(first ? [first] : []);
-    }
     renderAll();
   }));
   $("#selectAll").addEventListener("change", event => {
     const source = selectedSource();
     visibleSessions().forEach(session => {
       if (!session.locked && (!source || source === session.provider)) {
-        if (state.action === "fork" && event.target.checked) {
-          state.selected = new Set([session.id]);
-        } else {
-          event.target.checked ? state.selected.add(session.id) : state.selected.delete(session.id);
-        }
+        event.target.checked ? state.selected.add(session.id) : state.selected.delete(session.id);
       }
     });
     state.plan = null;

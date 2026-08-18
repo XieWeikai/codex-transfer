@@ -60,6 +60,12 @@
           <input id="search" type="search" placeholder="搜索标题、工作目录或 Session ID" aria-label="搜索会话">
           <kbd>⌘ K</kbd>
         </label>
+        <label class="select-control project-control">
+          <span>Project</span>
+          <select id="projectFilter" aria-label="按 Project 筛选">
+            <option value="__all__">全部 Project</option>
+          </select>
+        </label>
         <label class="select-control">
           <span>排序</span>
           <select id="sortSessions" aria-label="会话排序">
@@ -81,10 +87,7 @@
         <label class="select-all"><input type="checkbox" id="selectAll"> 选择当前结果</label>
       </div>
 
-      <div class="session-table" role="region" aria-label="Session 列表" tabindex="0">
-        <div class="table-head" aria-hidden="true">
-          <span></span><span>SESSION</span><span>MODEL / WORKSPACE</span><span>UPDATED</span><span>SIZE</span><span></span>
-        </div>
+      <div class="session-table" role="region" aria-label="Session 卡片列表" tabindex="0">
         <div id="sessionList" class="session-list" aria-live="polite"></div>
       </div>
     </section>
@@ -112,7 +115,7 @@
       <div class="drop-zone" id="dropZone" role="region" aria-label="Session 拖拽投放区">
         <div class="drop-icon" aria-hidden="true">⇢</div>
         <strong id="dropTitle">拖拽一个 Session 创建 Fork</strong>
-        <span id="dropHint">原会话保持不变，也可以点按“加入”</span>
+        <span id="dropHint">支持多选；每个 Fork 独立备份和审计</span>
       </div>
 
       <div class="queue-heading">
