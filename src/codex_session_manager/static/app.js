@@ -8,6 +8,7 @@ const state = {
   filter: "all",
   plan: null,
   restoreId: null,
+  restorePlan: null,
   draggingId: null,
   pointerDrag: null,
   mouseDrag: null,
@@ -436,18 +437,39 @@ function closeHistory() {
   $("#openHistory").focus();
 }
 
-function openRestore(operationId) {
+async function openRestore(operationId) {
   state.restoreId = operationId;
+  state.restorePlan = null;
   $("#restoreOperationLabel").textContent = operationId;
+  $("#restorePreflight").className = "preflight-status";
+  $("#restorePreflight").innerHTML = "<span></span><strong>正在检查快照与当前状态</strong>";
+  $("#restoreRiskList").innerHTML = "";
   $("#restoreRiskAck").checked = false;
   $("#restoreAck").value = "";
   $("#restoreConfirm").disabled = true;
   closeHistory();
   $("#restoreDialog").showModal();
+  try {
+    state.restorePlan = await api(`/api/operations/${encodeURIComponent(operationId)}/restore-preview`, {
+      method: "POST", body: "{}",
+    });
+    const blocked = !state.restorePlan.executable;
+    $("#restorePreflight").className = `preflight-status ${blocked ? "bad" : "ok"}`;
+    $("#restorePreflight").innerHTML = `<span></span><strong>${blocked ? "当前历史已分叉，无法无损恢复" : "快照与迁移后状态一致"}</strong>`;
+    $("#restoreRiskList").innerHTML = state.restorePlan.risks.map(risk => `
+      <div class="risk ${escapeHtml(risk.severity)}"><span class="risk-marker">${risk.severity === "critical" ? "×" : "!"}</span><div><strong>${escapeHtml(risk.message)}</strong><p>${escapeHtml(risk.remediation)}</p></div></div>
+    `).join("");
+    updateRestoreButton();
+  } catch (error) {
+    $("#restoreDialog").close();
+    toast(error.message, true);
+  }
 }
 
 function updateRestoreButton() {
-  $("#restoreConfirm").disabled = !$("#restoreRiskAck").checked || $("#restoreAck").value !== "RESTORE";
+  $("#restoreConfirm").disabled = !state.restorePlan?.executable
+    || !$("#restoreRiskAck").checked
+    || $("#restoreAck").value !== "RESTORE";
 }
 
 async function restore() {

@@ -67,6 +67,11 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                     payload.get("target_provider", ""),
                     payload.get("acknowledgement", ""),
                 )
+            elif path.startswith("/api/operations/") and path.endswith("/restore-preview"):
+                operation_id = path.removeprefix("/api/operations/").removesuffix(
+                    "/restore-preview"
+                )
+                result = self.server.engine.preview_restore(operation_id)
             elif path.startswith("/api/operations/") and path.endswith("/restore"):
                 operation_id = path.removeprefix("/api/operations/").removesuffix("/restore")
                 result = self.server.engine.restore(
@@ -121,4 +126,3 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _static(name: str) -> bytes:
         return files("codex_session_manager.static").joinpath(name).read_bytes()
-

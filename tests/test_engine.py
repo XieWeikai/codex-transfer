@@ -81,6 +81,7 @@ class MigrationEngineTest(unittest.TestCase):
         plan = self.engine.preview(["session-1"], "source", "target")
         self.assertTrue(plan.executable)
         self.assertGreater(plan.estimated_backup_bytes, 0)
+        self.assertIn("provider-provenance-unavailable", {risk.code for risk in plan.risks})
 
         migration = self.engine.execute(["session-1"], "source", "target", "MIGRATE")
         self.assertEqual(migration["status"], "completed")
@@ -102,8 +103,26 @@ class MigrationEngineTest(unittest.TestCase):
         with self.rollout.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"type": "event_msg", "payload": {"type": "new"}}) + "\n")
 
-        with self.assertRaisesRegex(MigrationError, "changed after migration"):
+        restore_plan = self.engine.preview_restore(migration["operation_id"])
+        self.assertFalse(restore_plan["executable"])
+        self.assertIn("trace-diverged", {risk["code"] for risk in restore_plan["risks"]})
+        with self.assertRaisesRegex(MigrationError, "阻断风险"):
             self.engine.restore(migration["operation_id"], "RESTORE")
+
+    def test_preview_reports_encrypted_reasoning(self) -> None:
+        with self.rollout.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {"type": "reasoning", "encrypted_content": "opaque"},
+                    }
+                )
+                + "\n"
+            )
+        plan = self.engine.preview(["session-1"], "source", "target")
+        self.assertEqual(plan.trace_profiles[0].encrypted_content_items, 1)
+        self.assertIn("encrypted-content-not-portable", {risk.code for risk in plan.risks})
 
     def test_execute_requires_exact_acknowledgement(self) -> None:
         with self.assertRaisesRegex(MigrationError, "MIGRATE"):

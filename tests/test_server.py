@@ -15,6 +15,7 @@ class StaticAssetsTest(unittest.TestCase):
         script = SessionManagerHandler._static("app.js")
         self.assertIn("迁移投放区".encode(), html)
         self.assertIn("确认迁移风险".encode(), html)
+        self.assertIn("正在检查快照与当前状态".encode(), html)
         self.assertNotIn("安全说明".encode(), html)
         self.assertIn(b'addEventListener("drop"', script)
         self.assertIn("加入".encode(), script)

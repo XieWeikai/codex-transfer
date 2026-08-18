@@ -28,6 +28,17 @@ class Session:
 
 
 @dataclass(frozen=True)
+class TraceProfile:
+    session_id: str
+    parsed_records: int
+    malformed_records: int
+    encrypted_content_items: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class Risk:
     severity: Severity
     code: str
@@ -44,6 +55,7 @@ class MigrationPlan:
     target_provider: str
     sessions: list[Session]
     risks: list[Risk] = field(default_factory=list)
+    trace_profiles: list[TraceProfile] = field(default_factory=list)
     estimated_backup_bytes: int = 0
 
     @property
@@ -56,6 +68,7 @@ class MigrationPlan:
             "target_provider": self.target_provider,
             "sessions": [s.to_dict() for s in self.sessions],
             "risks": [r.to_dict() for r in self.risks],
+            "trace_profiles": [profile.to_dict() for profile in self.trace_profiles],
             "estimated_backup_bytes": self.estimated_backup_bytes,
             "executable": self.executable,
         }
@@ -76,4 +89,3 @@ def ensure_within(path: Path, root: Path) -> Path:
     if not resolved.is_relative_to(root_resolved):
         raise ValueError(f"Path escapes Codex home: {resolved}")
     return resolved
-

@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Iterable
 
-from .model import Session, ensure_within
+from .model import Session, TraceProfile, ensure_within
 
 try:
     import fcntl
@@ -125,6 +125,25 @@ class CodexRepository:
             return None
         return None
 
+    def inspect_trace(self, path: Path, session_id: str) -> TraceProfile:
+        """Inspect structural portability signals without retaining conversation content."""
+        parsed = 0
+        malformed = 0
+        encrypted = 0
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        malformed += 1
+                        continue
+                    parsed += 1
+                    encrypted += self._count_encrypted_content(value)
+        except OSError as exc:
+            raise RepositoryError(f"Cannot inspect rollout {path}: {exc}") from exc
+        return TraceProfile(session_id, parsed, malformed, encrypted)
+
     def rewrite_rollout_provider(
         self, path: Path, session_id: str, expected: str, target: str
     ) -> None:
@@ -212,6 +231,15 @@ class CodexRepository:
         return {"id", "title", "model_provider", "cwd", "updated_at", "rollout_path"}.issubset(
             cls._columns(conn, "threads")
         )
+
+    @classmethod
+    def _count_encrypted_content(cls, value: object) -> int:
+        if isinstance(value, dict):
+            own = int(bool(value.get("encrypted_content")))
+            return own + sum(cls._count_encrypted_content(item) for item in value.values())
+        if isinstance(value, list):
+            return sum(cls._count_encrypted_content(item) for item in value)
+        return 0
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:

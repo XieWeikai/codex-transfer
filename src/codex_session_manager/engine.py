@@ -62,6 +62,7 @@ class MigrationEngine:
             raise MigrationError("Select at least one session")
         sessions = self.repository.sessions_by_id(session_ids)
         risks: list[Risk] = []
+        trace_profiles = []
 
         if target not in self.repository.provider_ids():
             risks.append(
@@ -111,6 +112,33 @@ class MigrationEngine:
                         "先用可信备份修复这条不一致的会话，再执行迁移。",
                     )
                 )
+            if Path(session.rollout_path).exists():
+                trace_profiles.append(
+                    self.repository.inspect_trace(Path(session.rollout_path), session.id)
+                )
+
+        encrypted_items = sum(profile.encrypted_content_items for profile in trace_profiles)
+        encrypted_sessions = sum(profile.encrypted_content_items > 0 for profile in trace_profiles)
+        malformed_records = sum(profile.malformed_records for profile in trace_profiles)
+        if encrypted_items:
+            risks.append(
+                Risk(
+                    "warning",
+                    "encrypted-content-not-portable",
+                    f"{encrypted_sessions} 个会话包含 {encrypted_items} 项 encrypted_content，"
+                    "目标后端可能无法解密这些推理状态。",
+                    "优先使用 Fork 保留原会话；迁移后先做一次恢复验证，并永久保留快照。",
+                )
+            )
+        if malformed_records:
+            risks.append(
+                Risk(
+                    "critical",
+                    "trace-malformed",
+                    f"检测到 {malformed_records} 条无法解析的 rollout 记录。",
+                    "不要迁移可能损坏的 trace；先从可信备份修复或导出可见聊天内容。",
+                )
+            )
 
         db_paths = {Path(session.db_path) for session in sessions}
         for db_path in db_paths:
@@ -129,6 +157,12 @@ class MigrationEngine:
             [
                 Risk(
                     "warning",
+                    "provider-provenance-unavailable",
+                    "Codex trace 没有可靠的逐轮 provider 归属；在目标 provider 继续聊天后会形成不可无损合并的混合历史。",
+                    "迁移后若产生新消息，只能保留当前状态、克隆旧快照或破坏性回滚，无法自动逐轮还原来源。",
+                ),
+                Risk(
+                    "warning",
                     "model-compatibility",
                     "目标 provider 可能不支持会话记录的模型、工具、推理等级或 API 模式。",
                     "恢复会话前，请核对目标 provider 的模型映射和能力。",
@@ -140,7 +174,7 @@ class MigrationEngine:
                     "在迁移后的会话成功恢复使用前，请保留完整备份。",
                 ),
                 Risk(
-                    "info",
+                    "warning",
                     "credentials-not-moved",
                     "本工具不会复制或修改 provider 凭据及 config.toml 配置。",
                     "请在 Codex 或 CC Switch 中单独管理目标 provider 的凭据。",
@@ -149,7 +183,51 @@ class MigrationEngine:
         )
         db_size = sum(path.stat().st_size for path in db_paths)
         rollout_size = sum(session.size_bytes for session in sessions)
-        return MigrationPlan(source, target, sessions, risks, db_size + rollout_size)
+        return MigrationPlan(source, target, sessions, risks, trace_profiles, db_size + rollout_size)
+
+    def preview_restore(self, operation_id: str) -> dict[str, Any]:
+        original = self.audit.read_manifest(operation_id)
+        if original.get("kind") != "migration" or original.get("status") != "completed":
+            raise MigrationError("Only completed migration operations can be restored")
+        if original.get("restored_by"):
+            raise MigrationError("This migration has already been restored")
+        current_sessions = self.repository.sessions_by_id(original["session_ids"])
+        locked = [session.id for session in current_sessions if session.locked]
+        changed = self._post_state_changes(original)
+        risks = []
+        if locked:
+            risks.append(
+                Risk(
+                    "critical",
+                    "session-active",
+                    "相关会话正在被 Codex 写入。",
+                    "关闭这些任务后重新检查：" + ", ".join(locked),
+                )
+            )
+        if changed:
+            risks.append(
+                Risk(
+                    "critical",
+                    "trace-diverged",
+                    "迁移后的会话或索引已经变化，当前历史与迁移快照发生分叉。",
+                    "原地恢复会删除新增聊天，因此已阻止。请保留当前状态，或从旧快照创建独立副本。",
+                )
+            )
+        risks.append(
+            Risk(
+                "warning",
+                "restore-provenance-limit",
+                "恢复只能还原迁移前字节，不能证明混合 trace 中每轮消息的 provider 来源。",
+                "恢复后仍需使用原 provider 验证会话；凭据和 provider 配置不会随快照恢复。",
+            )
+        )
+        return {
+            "operation_id": operation_id,
+            "session_ids": original["session_ids"],
+            "changed_paths": changed,
+            "risks": [risk.to_dict() for risk in risks],
+            "executable": not any(risk.severity == "critical" for risk in risks),
+        }
 
     def execute(
         self,
@@ -231,17 +309,10 @@ class MigrationEngine:
         if acknowledgement != "RESTORE":
             raise MigrationError("Risk acknowledgement must equal RESTORE")
         with self._exclusive_lock():
+            restore_plan = self.preview_restore(operation_id)
+            if not restore_plan["executable"]:
+                raise MigrationError("恢复预检发现阻断风险；当前状态未被修改")
             original = self.audit.read_manifest(operation_id)
-            if original.get("kind") != "migration" or original.get("status") != "completed":
-                raise MigrationError("Only completed migration operations can be restored")
-            if original.get("restored_by"):
-                raise MigrationError("This migration has already been restored")
-            current_sessions = self.repository.sessions_by_id(original["session_ids"])
-            locked = [session.id for session in current_sessions if session.locked]
-            if locked:
-                raise MigrationError(
-                    "恢复被阻止，以下会话正在被 Codex 写入：" + ", ".join(locked)
-                )
             self._assert_post_hashes(original)
 
             restore_id, restore_dir = self.audit.new_operation("restore")
@@ -300,18 +371,25 @@ class MigrationEngine:
             raise RepositoryError(f"Post-migration verification failed: {', '.join(failures)}")
 
     def _assert_post_hashes(self, manifest: dict[str, Any]) -> None:
+        changed = self._post_state_changes(manifest)
+        if changed:
+            raise MigrationError(
+                "Current data changed after migration; restore is blocked to prevent data loss: "
+                + ", ".join(changed)
+            )
+
+    @staticmethod
+    def _post_state_changes(manifest: dict[str, Any]) -> list[str]:
+        changed = []
         for entry in manifest["files"]:
             path = Path(entry["source"])
             if not path.exists() or sha256_file(path) != entry.get("after_sha256"):
-                raise MigrationError(
-                    f"Current data changed after migration: {path}. Restore is blocked to prevent data loss."
-                )
+                changed.append(str(path))
         for entry in manifest["databases"]:
             path = Path(entry["source"])
             if not path.exists() or sha256_database(path) != entry.get("after_sha256"):
-                raise MigrationError(
-                    f"Current data changed after migration: {path}. Restore is blocked to prevent data loss."
-                )
+                changed.append(str(path))
+        return changed
 
     @staticmethod
     def _group_by_database(sessions) -> dict[Path, list[str]]:

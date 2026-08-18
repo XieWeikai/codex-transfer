@@ -177,7 +177,8 @@
         <button value="cancel" class="icon-button dialog-close" aria-label="关闭恢复确认">×</button>
       </header>
       <div class="dialog-body">
-        <div class="inline-warning"><strong>恢复可能覆盖当前状态</strong><p>系统会先备份当前数据。若文件自迁移后发生变化，恢复将自动被阻止，避免丢失新消息。</p></div>
+        <div class="preflight-status" id="restorePreflight" aria-live="polite"><span></span><strong>正在检查快照与当前状态</strong></div>
+        <div id="restoreRiskList" class="risk-list"></div>
         <label class="confirmation-check"><input type="checkbox" id="restoreRiskAck"><span>我已关闭相关 Codex 任务，并理解恢复限制。</span></label>
         <label class="field-stack" for="restoreAck"><span>输入 <code>RESTORE</code> 确认</span><input id="restoreAck" autocomplete="off" spellcheck="false" placeholder="RESTORE"></label>
       </div>
