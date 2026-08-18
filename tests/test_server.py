@@ -56,6 +56,8 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b'data-action="archive"', html)
         self.assertIn(b'data-action="unarchive"', html)
         self.assertIn(b'themeSelect', html)
+        self.assertIn(b'row.addEventListener("dragstart"', script)
+        self.assertIn(b'user-select: none', SessionManagerHandler._static("styles.css"))
 
 
 if __name__ == "__main__":

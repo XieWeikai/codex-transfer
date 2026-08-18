@@ -463,6 +463,7 @@ function setupPointerDrag(row, id) {
     if (!drag.active && distance < 8) return;
     if (!drag.active) {
       drag.active = true;
+      state.suppressCardClick = true;
       state.draggingId = id;
       row.classList.add("dragging");
       const session = state.sessions.find(item => item.id === id);
@@ -479,6 +480,7 @@ function setupPointerDrag(row, id) {
   row.addEventListener("pointercancel", event => finishPointerDrag(event));
   row.addEventListener("mousedown", event => {
     if (event.button !== 0 || event.target.closest("button, input, label")) return;
+    event.preventDefault();
     state.mouseDrag = {
       id,
       startX: event.clientX,
@@ -488,6 +490,7 @@ function setupPointerDrag(row, id) {
       ghost: null,
     };
   });
+  row.addEventListener("dragstart", event => event.preventDefault());
 }
 
 function pointInside(element, x, y) {
@@ -498,6 +501,7 @@ function pointInside(element, x, y) {
 function finishPointerDrag(event) {
   const drag = state.pointerDrag;
   if (!drag || drag.pointerId !== event.pointerId) return;
+  const wasActive = drag.active;
   const dropped = drag.active && pointInside($("#dropZone"), event.clientX, event.clientY);
   drag.row.classList.remove("dragging");
   drag.ghost?.remove();
@@ -508,6 +512,7 @@ function finishPointerDrag(event) {
     setSessionSelected(drag.id, true);
     toast("Session 已加入迁移队列。");
   }
+  if (wasActive) setTimeout(() => { state.suppressCardClick = false; }, 0);
 }
 
 function moveMouseDrag(event) {
@@ -523,6 +528,7 @@ function moveMouseDrag(event) {
 function finishMouseDrag(event) {
   const drag = state.mouseDrag;
   if (!drag) return;
+  const wasActive = drag.active;
   const dropped = drag.active && pointInside($("#dropZone"), event.clientX, event.clientY);
   clearDragVisuals(drag);
   state.mouseDrag = null;
@@ -530,6 +536,7 @@ function finishMouseDrag(event) {
     setSessionSelected(drag.id, true);
     toast("Session 已加入迁移队列。");
   }
+  if (wasActive) setTimeout(() => { state.suppressCardClick = false; }, 0);
 }
 
 function activateDragVisuals(drag) {
