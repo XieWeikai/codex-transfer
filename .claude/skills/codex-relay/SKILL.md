@@ -1,6 +1,6 @@
 ---
 name: codex-relay
-description: Inspect, filter, preflight, fork, move, restore, and audit local Codex sessions with the Codex Relay CLI. Use when a user asks to find Codex sessions, change their provider, create a safer provider fork, inspect operation history, or recover an unchanged migration or fork.
+description: Inspect, filter, preflight, fork, move, archive, unarchive, restore, and audit local Codex sessions with the Codex Relay CLI. Use when a user asks to find Codex sessions, determine whether one is in use, change its provider or archive visibility, create a safer provider fork, inspect operation history, or recover an unchanged migration or fork.
 ---
 
 # Codex Relay CLI
@@ -37,7 +37,7 @@ Never guess a Session ID, operation ID, source Provider, or target Provider. Res
 
 ## Mutation safety gate
 
-Fork, Move, and Restore write local Codex state. Perform one only when the user explicitly requested that exact operation and its targets.
+Fork, Move, Archive, Unarchive, and Restore write local Codex state. Perform one only when the user explicitly requested that exact operation and its targets.
 
 Before every write:
 
@@ -49,6 +49,8 @@ Before every write:
 6. Never bypass or synthesize a confirmation word without authorization for the write.
 
 The target Provider must already be configured independently. This tool does not move credentials, API keys, OAuth state, Base URLs, or model aliases.
+
+A session with `locked: true` currently has a held Codex writer lock and must not be mutated. This is not a recent-activity estimate: an idle UI tab can be open without a held lock. Never substitute timestamps or process-name matching for the lock result.
 
 ## Fork
 
@@ -100,6 +102,20 @@ codex-relay restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
 Do not restore when the preview reports divergence. Restore can remove later conversation data; a Fork undo deletes the forked thread and rollout. When blocked, preserve the current state and report the changed paths without attempting a destructive workaround.
+
+## Archive or unarchive
+
+Archive changes default-list visibility without deleting history or changing Provider. Use the matching preview immediately before the write:
+
+```bash
+codex-relay archive-preview --session SESSION_ID --json
+codex-relay archive --session SESSION_ID --acknowledge ARCHIVE --json
+
+codex-relay unarchive-preview --session SESSION_ID --json
+codex-relay unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+```
+
+Repeat `--session` for multiple sessions. Archive batches are not atomic: report `completed` and `failed` precisely and do not retry completed items. Codex may move the rollout while changing archive state; never move it manually or update the SQLite `archived` field directly.
 
 ## Verify and report
 

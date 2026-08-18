@@ -33,6 +33,7 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b"/api/workspace", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/preview", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/fork", SessionManagerHandler._static("app.js"))
+        self.assertIn(b"/api/archive", SessionManagerHandler._static("app.js"))
         self.assertIn(b"thread/fork", SessionManagerHandler._static("docs.html"))
         self.assertIn(b"codex-relay-theme", SessionManagerHandler._static("docs.js"))
 
@@ -52,6 +53,8 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b"sessions.map", script)
         self.assertIn(b"prefers-reduced-motion", SessionManagerHandler._static("styles.css"))
         self.assertIn(b'data-action="fork"', html)
+        self.assertIn(b'data-action="archive"', html)
+        self.assertIn(b'data-action="unarchive"', html)
         self.assertIn(b'themeSelect', html)
 
 

@@ -104,10 +104,12 @@
       <div class="action-switch segmented" aria-label="Session 操作模式">
         <button type="button" class="segment action-mode active" data-action="fork" aria-pressed="true">Fork 副本</button>
         <button type="button" class="segment action-mode" data-action="migration" aria-pressed="false">移动原会话</button>
+        <button type="button" class="segment action-mode" data-action="archive" aria-pressed="false">归档</button>
+        <button type="button" class="segment action-mode" data-action="unarchive" aria-pressed="false">还原归档</button>
       </div>
 
-      <label class="field-label" for="targetProvider">目标 provider</label>
-      <div class="target-select-wrap">
+      <label class="field-label" id="targetProviderLabel" for="targetProvider">目标 provider</label>
+      <div class="target-select-wrap" id="targetProviderField">
         <select id="targetProvider"></select>
         <span aria-hidden="true">↓</span>
       </div>
@@ -150,7 +152,7 @@
       <div><span class="panel-kicker">AUDIT TRAIL</span><h2 id="historyTitle">操作与恢复</h2></div>
       <button class="icon-button" id="closeHistory" type="button" aria-label="关闭操作记录">×</button>
     </div>
-    <p class="drawer-intro">每次迁移和恢复都保留完整快照、SHA-256 清单与哈希链事件。</p>
+    <p class="drawer-intro">每次迁移、Fork、归档和恢复都保留完整快照、SHA-256 清单与哈希链事件。</p>
     <div class="audit-health" id="auditHealth"><span></span><strong>审计链检查中</strong></div>
     <div id="operations" class="operations"></div>
   </aside>

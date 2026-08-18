@@ -98,6 +98,16 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                     payload.get("target_provider", ""),
                     payload.get("acknowledgement", ""),
                 )
+            elif path == "/api/archive/preview":
+                result = self.server.engine.preview_archive(
+                    payload.get("session_ids", []), payload.get("archived")
+                )
+            elif path == "/api/archive":
+                result = self.server.engine.set_archived_batch(
+                    payload.get("session_ids", []),
+                    payload.get("archived"),
+                    payload.get("acknowledgement", ""),
+                )
             elif path.startswith("/api/operations/") and path.endswith("/restore-preview"):
                 operation_id = path.removeprefix("/api/operations/").removesuffix(
                     "/restore-preview"

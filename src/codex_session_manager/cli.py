@@ -35,7 +35,7 @@ def _add_storage_options(target: argparse.ArgumentParser, suppress: bool = False
     target.add_argument(
         "--codex-bin",
         default=_default("codex", suppress),
-        help="Codex CLI executable for Fork",
+        help="Codex CLI executable for Fork and archive operations",
     )
 
 
@@ -59,7 +59,7 @@ def _add_command_storage_options(target: argparse.ArgumentParser) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="codex-relay",
-        description="Inspect, fork, move, and restore local Codex sessions safely",
+        description="Inspect, fork, move, archive, and restore local Codex sessions safely",
     )
     _add_storage_options(result)
     _add_server_options(result)
@@ -124,6 +124,29 @@ def parser() -> argparse.ArgumentParser:
     move.add_argument("--acknowledge", required=True, choices=["MIGRATE"])
     _add_output_option(move)
 
+    for command, archived, preview in (
+        ("archive-preview", True, True),
+        ("archive", True, False),
+        ("unarchive-preview", False, True),
+        ("unarchive", False, False),
+    ):
+        action = "Archive" if archived else "Unarchive"
+        command_parser = subparsers.add_parser(
+            command,
+            help=f"{'Preflight' if preview else 'Back up and execute'} {action.lower()} for sessions",
+        )
+        _add_command_storage_options(command_parser)
+        command_parser.add_argument(
+            "--session", action="append", required=True, dest="session_ids"
+        )
+        if not preview:
+            command_parser.add_argument(
+                "--acknowledge",
+                required=True,
+                choices=["ARCHIVE" if archived else "UNARCHIVE"],
+            )
+        _add_output_option(command_parser)
+
     restore_preview = subparsers.add_parser(
         "restore-preview", help="Check whether an operation can be safely restored"
     )
@@ -142,10 +165,12 @@ def parser() -> argparse.ArgumentParser:
 def build_engine(args: argparse.Namespace) -> MigrationEngine:
     repository = CodexRepository(args.codex_home)
     audit = AuditStore(args.data_dir)
+    app_server = CodexAppServer(repository.home, executable=args.codex_bin)
     return MigrationEngine(
         repository,
         audit,
-        CodexAppServer(repository.home, executable=args.codex_bin),
+        app_server,
+        app_server,
     )
 
 
@@ -240,6 +265,13 @@ def execute_command(args: argparse.Namespace, engine: MigrationEngine) -> tuple[
             args.target_provider,
             args.acknowledge,
         ), 0
+    if args.command in {"archive-preview", "unarchive-preview"}:
+        return engine.preview_archive(args.session_ids, args.command == "archive-preview"), 0
+    if args.command in {"archive", "unarchive"}:
+        result = engine.set_archived_batch(
+            args.session_ids, args.command == "archive", args.acknowledge
+        )
+        return result, int(result["failed"] is not None)
     if args.command == "restore-preview":
         return engine.preview_restore(args.operation_id), 0
     if args.command == "restore":
@@ -334,16 +366,19 @@ def _print_result(command: str, data: Any, out: TextIO) -> None:
         _print_operations(data, out)
     elif command.endswith("-preview"):
         _print_plan(data, out)
-    elif command == "fork":
+    elif command in {"fork", "archive", "unarchive"}:
+        verb = {"fork": "Forked", "archive": "Archived", "unarchive": "Unarchived"}[command]
         print(
-            f"Forked {len(data['completed'])}/{len(data['requested_session_ids'])} session(s).",
+            f"{verb} {len(data['completed'])}/{len(data['requested_session_ids'])} session(s).",
             file=out,
         )
         for result in data["completed"]:
-            print(
-                f"  operation={result['operation_id']} fork={result['forked_session_ids'][0]}",
-                file=out,
+            detail = (
+                f" fork={result['forked_session_ids'][0]}"
+                if command == "fork"
+                else ""
             )
+            print(f"  operation={result['operation_id']}{detail}", file=out)
         if data["failed"]:
             print(
                 f"  failed={data['failed']['session_id']}: {data['failed']['error']}",

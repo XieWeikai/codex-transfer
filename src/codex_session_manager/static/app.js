@@ -100,6 +100,17 @@ function selectedSource() {
   return selectedSessions()[0]?.provider || null;
 }
 
+function isArchiveAction() {
+  return state.action === "archive" || state.action === "unarchive";
+}
+
+function sessionSelectable(session) {
+  if (session.locked) return false;
+  if (state.action === "archive") return !session.archived;
+  if (state.action === "unarchive") return session.archived;
+  return !session.archived;
+}
+
 function providerColor(provider) {
   const index = Math.max(0, state.providers.indexOf(provider));
   return providerColors[index % providerColors.length];
@@ -176,21 +187,32 @@ function renderAll() {
 
 function renderActionMode() {
   const fork = state.action === "fork";
+  const archive = state.action === "archive";
+  const unarchive = state.action === "unarchive";
   $$(".action-mode").forEach(button => {
     const active = button.dataset.action === state.action;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
-  $("#actionKicker").textContent = fork ? "FORK QUEUE" : "MOVE QUEUE";
-  $("#actionHeading").textContent = fork ? "Fork 工作区" : "移动工作区";
-  $("#dropTitle").textContent = fork ? "拖拽 Session 创建 Fork" : "拖拽 Session 到这里移动";
-  $("#dropHint").textContent = fork ? "支持多选；每个 Fork 独立备份和审计" : "原会话将切换归属；点击卡片或复选框多选";
-  $("#queueLabel").textContent = fork ? "待 Fork" : "待移动";
-  $("#selectedLabel").textContent = fork ? "条待 Fork" : "条待移动";
-  $("#previewButtonLabel").textContent = fork ? "检查并 Fork" : "检查并移动";
-  $("#actionNote").textContent = fork
-    ? "Fork 通过 Codex 官方 app-server 创建，并保留原会话。"
-    : "移动会改写原会话归属；执行前会完整备份并要求确认。";
+  const label = archive ? "归档" : unarchive ? "还原归档" : fork ? "Fork" : "移动";
+  $("#actionKicker").textContent = `${label.toLocaleUpperCase()} QUEUE`;
+  $("#actionHeading").textContent = `${label}工作区`;
+  $("#dropTitle").textContent = `拖拽 Session 到这里${label}`;
+  $("#dropHint").textContent = isArchiveAction()
+    ? "支持跨 Provider 多选；每条操作独立备份和审计"
+    : fork ? "支持多选；每个 Fork 独立备份和审计" : "原会话将切换归属；点击卡片或复选框多选";
+  $("#queueLabel").textContent = `待${label}`;
+  $("#selectedLabel").textContent = `条待${label}`;
+  $("#previewButtonLabel").textContent = `检查并${label}`;
+  $("#actionNote").textContent = archive
+    ? "归档通过 Codex 官方 app-server 隐藏 Session，不删除聊天记录。"
+    : unarchive
+      ? "还原归档通过官方 app-server 恢复可见状态，不改 Provider。"
+      : fork
+        ? "Fork 通过 Codex 官方 app-server 创建，并保留原会话。"
+        : "移动会改写原会话归属；执行前会完整备份并要求确认。";
+  $("#targetProviderLabel").hidden = isArchiveAction();
+  $("#targetProviderField").hidden = isArchiveAction();
   $("#selectAll").disabled = false;
   $("#selectAll").closest("label").title = "选择当前筛选结果中的可操作 Session";
 }
@@ -216,6 +238,10 @@ function renderProviders() {
 }
 
 function renderTargets() {
+  if (isArchiveAction()) {
+    $("#targetProvider").innerHTML = "";
+    return;
+  }
   const source = selectedSource() || state.activeProvider;
   const current = $("#targetProvider").value;
   const options = state.providers.filter(provider => provider !== source);
@@ -249,7 +275,7 @@ function visibleSessions() {
 function renderSessions() {
   hideSessionPopover();
   const sessions = visibleSessions();
-  const selectableSessions = sessions.filter(session => !session.locked);
+  const selectableSessions = sessions.filter(sessionSelectable);
   const selectedVisible = selectableSessions.filter(session => state.selected.has(session.id)).length;
   $("#visibleCount").textContent = sessions.length;
   $("#selectedCount").textContent = state.selected.size;
@@ -258,13 +284,14 @@ function renderSessions() {
 
   $("#sessionList").innerHTML = sessions.length ? sessions.map(session => {
     const selected = state.selected.has(session.id);
+    const selectable = sessionSelectable(session);
     const chips = [
       session.locked ? '<span class="status-chip locked">使用中</span>' : "",
       session.archived ? '<span class="status-chip archived">已归档</span>' : "",
     ].join("");
-    return `<article class="session-card ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.displayTitle)}, Project ${escapeHtml(projectLabel(session.cwd))}">
+    return `<article class="session-card ${selected ? "selected" : ""} ${!selectable ? "locked" : ""}" data-draggable="${selectable}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.displayTitle)}, Project ${escapeHtml(projectLabel(session.cwd))}">
       <div class="session-card-top">
-        <label class="session-check" aria-label="选择 ${escapeHtml(session.displayTitle)}"><input type="checkbox" ${selected ? "checked" : ""} ${session.locked ? "disabled" : ""}></label>
+        <label class="session-check" aria-label="选择 ${escapeHtml(session.displayTitle)}"><input type="checkbox" ${selected ? "checked" : ""} ${!selectable ? "disabled" : ""}></label>
         <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.displayTitle)} 的完整信息" aria-controls="sessionPopover" aria-expanded="false" title="查看完整信息">i</button></div>
       </div>
       <strong class="session-card-title">${escapeHtml(session.displayTitle)}</strong>
@@ -531,12 +558,15 @@ function clearDragVisuals(drag) {
 
 function setSessionSelected(id, selected) {
   const session = state.sessions.find(item => item.id === id);
-  if (!session || session.locked) {
-    toast("正在使用的 Session 必须先关闭后才能加入迁移。", true);
+  if (!session || !sessionSelectable(session)) {
+    const message = session?.locked
+      ? "正在使用的 Session 必须先关闭后才能操作。"
+      : state.action === "archive" ? "这个 Session 已经归档。" : "这个 Session 当前没有归档。";
+    toast(message, true);
     return;
   }
   const source = selectedSource();
-  if (selected && source && source !== session.provider) {
+  if (!isArchiveAction() && selected && source && source !== session.provider) {
     toast(`一次迁移只能包含同一来源 provider。当前来源是 ${source}。`, true);
     return;
   }
@@ -572,11 +602,13 @@ function renderQueue() {
   const sessions = selectedSessions();
   $("#queueCount").textContent = sessions.length;
   $("#selectedCount").textContent = sessions.length;
-  $("#sourceSummary").textContent = sessions[0]?.provider || "尚未选择";
+  $("#sourceSummary").textContent = isArchiveAction()
+    ? `${new Set(sessions.map(session => session.provider)).size} 个 Provider`
+    : sessions[0]?.provider || "尚未选择";
   $("#backupSummary").textContent = state.plan
     ? formatBytes(state.plan.estimated_backup_bytes)
     : sessions.length ? `至少 ${formatBytes(sessions.reduce((sum, session) => sum + session.size_bytes, 0))}` : "—";
-  $("#previewButton").disabled = sessions.length === 0 || !$("#targetProvider").value;
+  $("#previewButton").disabled = sessions.length === 0 || (!isArchiveAction() && !$("#targetProvider").value);
   $("#transferQueue").innerHTML = sessions.length ? sessions.map(session => `
     <div class="queue-item"><span></span><div><strong>${escapeHtml(session.displayTitle)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.displayTitle)}">×</button></div>
   `).join("") : '<div class="queue-empty">队列为空<br>拖入或点击卡片开始</div>';
@@ -591,7 +623,11 @@ function renderOperations() {
       ? `${escapeHtml(operation.source_provider)} → ${escapeHtml(operation.target_provider)}`
       : operation.kind === "fork"
         ? `${escapeHtml(operation.source_provider)} ↗ ${escapeHtml(operation.target_provider)} · Fork`
-        : `恢复 ${escapeHtml(operation.restores_operation || "snapshot")}`;
+        : operation.kind === "archive"
+          ? "归档 Session"
+          : operation.kind === "unarchive"
+            ? "还原归档 Session"
+            : `恢复 ${escapeHtml(operation.restores_operation || "snapshot")}`;
     const status = operation.restored_by ? "已恢复" : operation.status;
     return `<article class="operation"><div class="operation-top"><strong class="operation-route">${route}</strong><span class="operation-status ${escapeHtml(operation.status)}">${escapeHtml(status)}</span></div><div class="operation-bottom"><span>${escapeHtml(new Date(operation.created_at).toLocaleString("zh-CN"))} · ${(operation.session_ids || []).length} sessions</span>${canRestore ? `<button class="restore-button" type="button" data-id="${escapeHtml(operation.operation_id)}">恢复</button>` : `<code>${escapeHtml(operation.operation_id)}</code>`}</div></article>`;
   }).join("") : '<div class="empty-state"><div><strong>还没有操作记录</strong><p>完成一次迁移后，审计记录会显示在这里。</p></div></div>';
@@ -601,20 +637,27 @@ function renderOperations() {
 async function openMigrationDialog() {
   const sessions = selectedSessions();
   const target = $("#targetProvider").value;
-  if (!sessions.length || !target) return;
+  if (!sessions.length || (!isArchiveAction() && !target)) return;
   const dialog = $("#migrationDialog");
   const fork = state.action === "fork";
-  const acknowledgement = fork ? "FORK" : "MIGRATE";
-  $("#dialogKicker").textContent = fork ? "FORK CHECK" : "MOVE CHECK";
-  $("#dialogTitle").textContent = fork ? "确认 Fork 风险" : "确认移动风险";
-  $("#compatibilityText").textContent = fork
-    ? "我已确认目标 provider 已配置，并理解新 Fork 的加密推理可能无法继续使用。"
-    : "我已确认目标 provider 已配置，并理解原会话归属将被改写。";
+  const archive = state.action === "archive";
+  const unarchive = state.action === "unarchive";
+  const acknowledgement = archive ? "ARCHIVE" : unarchive ? "UNARCHIVE" : fork ? "FORK" : "MIGRATE";
+  const label = archive ? "归档" : unarchive ? "还原归档" : fork ? "Fork" : "移动";
+  $("#dialogKicker").textContent = `${acknowledgement} CHECK`;
+  $("#dialogTitle").textContent = `确认${label}风险`;
+  $("#compatibilityText").textContent = archive
+    ? "我已关闭相关 Codex 任务，并理解归档会从默认活动列表隐藏 Session。"
+    : unarchive
+      ? "我已关闭相关 Codex 任务，并理解批量还原归档是逐条执行的。"
+      : fork
+        ? "我已确认目标 provider 已配置，并理解新 Fork 的加密推理可能无法继续使用。"
+        : "我已确认目标 provider 已配置，并理解原会话归属将被改写。";
   $("#actionAckCode").textContent = acknowledgement;
   $("#migrateAck").placeholder = acknowledgement;
-  $("#migrateButton").textContent = fork ? "创建备份并 Fork" : "创建备份并移动";
-  $("#dialogSource").textContent = sessions[0].provider;
-  $("#dialogTarget").textContent = target;
+  $("#migrateButton").textContent = `创建备份并${label}`;
+  $("#dialogSource").textContent = isArchiveAction() ? `${sessions.length} 个 Session` : sessions[0].provider;
+  $("#dialogTarget").textContent = archive ? "已归档" : unarchive ? "活动列表" : target;
   $("#dialogCount").textContent = sessions.length;
   $("#riskList").innerHTML = "";
   $("#preflightStatus").className = "preflight-status";
@@ -624,10 +667,12 @@ async function openMigrationDialog() {
   $("#migrateButton").disabled = true;
   dialog.showModal();
   try {
-    const previewPath = fork ? "/api/forks/preview" : "/api/preview";
-    const payload = fork
-      ? {session_ids: sessions.map(session => session.id), target_provider: target}
-      : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: target};
+    const previewPath = isArchiveAction() ? "/api/archive/preview" : fork ? "/api/forks/preview" : "/api/preview";
+    const payload = isArchiveAction()
+      ? {session_ids: sessions.map(session => session.id), archived: archive}
+      : fork
+        ? {session_ids: sessions.map(session => session.id), target_provider: target}
+        : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: target};
     state.plan = await api(previewPath, {method: "POST", body: JSON.stringify(payload)});
     const critical = state.plan.risks.filter(risk => risk.severity === "critical").length;
     $("#preflightStatus").className = `preflight-status ${critical ? "bad" : "ok"}`;
@@ -645,7 +690,9 @@ async function openMigrationDialog() {
 }
 
 function updateMigrateButton() {
-  const acknowledgement = state.action === "fork" ? "FORK" : "MIGRATE";
+  const acknowledgement = state.action === "archive"
+    ? "ARCHIVE"
+    : state.action === "unarchive" ? "UNARCHIVE" : state.action === "fork" ? "FORK" : "MIGRATE";
   $("#migrateButton").disabled = !state.plan?.executable
     || !$("#compatibilityAck").checked
     || $("#migrateAck").value !== acknowledgement;
@@ -656,6 +703,28 @@ async function migrate() {
   const sessions = selectedSessions();
   try {
     const fork = state.action === "fork";
+    if (isArchiveAction()) {
+      const archived = state.action === "archive";
+      const result = await api("/api/archive", {
+        method: "POST",
+        body: JSON.stringify({
+          session_ids: sessions.map(session => session.id),
+          archived,
+          acknowledgement: $("#migrateAck").value,
+        }),
+      });
+      $("#migrationDialog").close();
+      result.completed.forEach(item => (item.session_ids || []).forEach(id => state.selected.delete(id)));
+      state.plan = null;
+      await load();
+      if (result.failed) {
+        toast(`批量${archived ? "归档" : "还原归档"}已完成 ${result.completed.length}/${sessions.length}；失败于 ${result.failed.session_id}：${result.failed.error}`, true);
+      } else {
+        state.selected.clear();
+        toast(`已完成 ${result.completed.length} 条${archived ? "归档" : "还原归档"}；每条均已独立备份并审计。`);
+      }
+      return;
+    }
     if (fork) {
       const completed = [];
       for (let index = 0; index < sessions.length; index += 1) {
@@ -797,17 +866,16 @@ function setupEvents() {
     renderQueue();
   });
   $$(".action-mode").forEach(button => button.addEventListener("click", () => {
+    state.selected.clear();
     state.action = button.dataset.action;
     state.plan = null;
-    renderActionMode();
-    renderTargets();
-    renderQueue();
+    renderAll();
   }));
   $("#selectAll").addEventListener("change", event => {
     const source = selectedSource();
     const sessions = visibleSessions();
     sessions.forEach(session => {
-      if (!session.locked && (!source || source === session.provider)) {
+      if (sessionSelectable(session) && (isArchiveAction() || !source || source === session.provider)) {
         event.target.checked ? state.selected.add(session.id) : state.selected.delete(session.id);
       }
     });
@@ -815,9 +883,9 @@ function setupEvents() {
     sessions.forEach(session => updateSessionCardSelection(session.id));
     renderTargets(); updateSelectionIndicators(); renderQueue();
   });
-  $$(".segment").forEach(button => button.addEventListener("click", () => {
+  $$(".filter-row .segment").forEach(button => button.addEventListener("click", () => {
     state.filter = button.dataset.filter;
-    $$(".segment").forEach(item => { item.classList.toggle("active", item === button); item.setAttribute("aria-pressed", String(item === button)); });
+    $$(".filter-row .segment").forEach(item => { item.classList.toggle("active", item === button); item.setAttribute("aria-pressed", String(item === button)); });
     renderSessions();
   }));
   $("#dropZone").addEventListener("dragover", event => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; $("#dropZone").classList.add("drag-over"); });

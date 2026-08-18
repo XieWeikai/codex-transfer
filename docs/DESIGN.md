@@ -2,7 +2,7 @@
 
 ## Goal
 
-Fork or move selected local Codex sessions between `model_provider` buckets while making every write traceable and recoverable. Credentials and provider configuration are explicitly out of scope.
+Fork or move selected local Codex sessions between `model_provider` buckets, and manage archive visibility, while making every write traceable and recoverable. Credentials and provider configuration are explicitly out of scope.
 
 ## Source findings
 
@@ -13,7 +13,7 @@ The implementation was checked against these source revisions on 2026-08-18:
 
 Codex reads provider metadata from the rollout `session_meta` record and persists a matching `model_provider` value in `state_5.sqlite.threads`. CC Switch's `codex_history_migration.rs` confirms that a provider bucket migration must update both representations and uses SQLite's backup interface before changing state. CC Switch also resolves `sqlite_home` and `CODEX_SQLITE_HOME`, which this project mirrors.
 
-Codex app-server exposes `thread/fork` with a `modelProvider` override. Forking therefore crosses the supported Codex interface instead of recreating its lineage and persistence rules. The local adapter starts app-server over stdio with the selected `CODEX_HOME`, initializes one connection, submits the fork request, validates the returned durable thread, and shuts the process down cleanly.
+Codex app-server exposes `thread/fork` with a `modelProvider` override plus `thread/archive` and `thread/unarchive`. Forking and archive changes therefore cross the supported Codex interface instead of recreating its lineage, file-placement, and persistence rules. The local adapter starts app-server over stdio with the selected `CODEX_HOME`, initializes one connection, submits one request, validates the resulting durable state, and shuts the process down cleanly.
 
 ## Deep modules
 
@@ -21,7 +21,7 @@ The design follows the `codebase-design` skill's depth, seam, and locality vocab
 
 ### `MigrationEngine`
 
-This is the external seam. Its interface covers migration preview/execute, Fork preview/execute, restore preview, and restore. Callers do not coordinate files, SQLite transactions, app-server lifecycle, backup generations, hashes, locks, or rollback themselves. Tests exercise the same interface as the HTTP adapter.
+This is the external seam. Its interface covers migration, Fork, archive and restore previews/execution. Callers do not coordinate files, SQLite transactions, app-server lifecycle, backup generations, hashes, locks, or rollback themselves. Tests exercise the same interface as the HTTP adapter.
 
 The read side exposes one `workspace_snapshot` interface for the initial workbench load. It scans Codex storage once and returns status, bounded session summaries, and operation history together. Full session titles are fetched by ID only when a user deliberately opens a detail popover; internal rollout and database paths never enter the inventory response.
 
@@ -31,7 +31,7 @@ This module owns the unstable Codex storage seam. It discovers state databases, 
 
 ### `CodexAppServer`
 
-This adapter owns the official Fork seam. Its small interface accepts a source thread ID and target Provider and returns the durable fork identity. Production uses the stdio app-server adapter; tests use an in-process adapter that produces the same observable repository state.
+This adapter owns official Codex thread mutations. Its small interface accepts either a Fork request or a desired archive state. Production uses the stdio app-server adapter; tests use an in-process adapter that produces the same observable repository state.
 
 ### `AuditStore`
 
@@ -46,6 +46,7 @@ This module owns backup generations and the audit seam. Each operation directory
 ```text
 created -> preparing -> backed_up -> completed
                                 \-> rolled_back
+                                \-> rollback_failed
 ```
 
 A restore is a new operation. Migration restore verifies the complete post-state before applying the original pre-state. Fork restore verifies that the created rollout is unchanged, snapshots the Fork, and removes only that thread and rollout. Both paths prevent restoration from silently deleting new messages.
@@ -59,6 +60,8 @@ The resulting guarantee is intentionally narrow: backup bytes are recoverable wh
 ## Consistency limits
 
 There is no transaction spanning arbitrary JSONL files and multiple SQLite databases. The engine therefore uses a recoverable workflow: exclusive manager lock, active Codex writer-lock checks, complete backup, atomic file replacement, SQLite transactions, post-write verification, and automatic rollback on caught failures. Sudden power loss can still interrupt the workflow; the completed pre-write backup and manifest are the recovery authority.
+
+Writer ownership is detected by attempting a non-blocking exclusive lock on Codex's per-thread lock file. File existence alone is insufficient because stale lock files can remain. Conversely, this signal establishes mutation safety rather than UI presence: an open idle tab may not hold a writer lock.
 
 ## Security
 
@@ -82,6 +85,6 @@ Drag is progressive enhancement, not a requirement. Every draggable session has 
 
 Large inventories are kept responsive by treating the grid as a stable view. Session summaries contain at most 240 title characters, cards render at most 120, and normalized search text is prepared once per load. Selecting or clearing sessions updates only the affected cards, counts, queue, and target state; the complete grid is rebuilt only when filtering or sorting changes what must be visible.
 
-Risk guidance is contextual. Migration warnings are shown only after preflight and before execution; restore warnings are shown when restore is requested. Both flows require an acknowledgement plus an explicit confirmation phrase (`MIGRATE` or `RESTORE`). The execute control stays disabled until those conditions and the server-side preflight result are satisfied.
+Risk guidance is contextual. Warnings are shown only after preflight and immediately before the requested mutation. Fork, migration, archive, unarchive, and restore require the matching explicit confirmation phrase (`FORK`, `MIGRATE`, `ARCHIVE`, `UNARCHIVE`, or `RESTORE`). The execute control stays disabled until the acknowledgement and server-side preflight result are satisfied.
 
 The visual system uses neutral graphite surfaces for dense operational data, green for the primary migration path, amber for cautions, red for destructive or blocked states, and blue/cyan only for secondary information. Layout decisions came from the actual provider-to-session-to-operation workflow; the installed `ui-ux-pro-max` skill supplied accessibility, interaction-target, typography, responsiveness, and reduced-motion checks rather than dictating an unrelated page template.

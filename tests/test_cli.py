@@ -120,6 +120,22 @@ class FakeEngine:
         self.calls.append(("restore", operation_id, acknowledgement))
         return {"operation_id": "restore-1", "kind": "restore", "status": "completed"}
 
+    def preview_archive(self, session_ids: list[str], archived: bool) -> dict:
+        self.calls.append(("archive-preview", session_ids, archived))
+        return {"sessions": session_ids, "archived": archived, "risks": [], "executable": True}
+
+    def set_archived_batch(
+        self, session_ids: list[str], archived: bool, acknowledgement: str
+    ) -> dict:
+        self.calls.append(("archive", session_ids, archived, acknowledgement))
+        return {
+            "requested_session_ids": session_ids,
+            "archived": archived,
+            "completed": [{"operation_id": "archive-1", "session_ids": session_ids}],
+            "failed": None,
+            "batch_atomic": False,
+        }
+
 
 class CliTest(unittest.TestCase):
     def test_legacy_and_explicit_serve_arguments_are_supported(self) -> None:
@@ -217,6 +233,29 @@ class CliTest(unittest.TestCase):
         execute_command(restore, engine)
         self.assertIn(("move", ["s-1"], "source", "target", "MIGRATE"), engine.calls)
         self.assertIn(("restore", "op-1", "RESTORE"), engine.calls)
+
+    def test_archive_and_unarchive_commands_route_to_shared_engine(self) -> None:
+        preview = parser().parse_args(
+            ["archive-preview", "--session", "s-1", "--session", "s-2"]
+        )
+        unarchive = parser().parse_args(
+            [
+                "unarchive",
+                "--session",
+                "s-3",
+                "--acknowledge",
+                "UNARCHIVE",
+            ]
+        )
+        engine = FakeEngine()
+        preview_result, preview_code = execute_command(preview, engine)
+        result, code = execute_command(unarchive, engine)
+        self.assertTrue(preview_result["archived"])
+        self.assertEqual(preview_code, 0)
+        self.assertFalse(result["archived"])
+        self.assertEqual(code, 0)
+        self.assertIn(("archive-preview", ["s-1", "s-2"], True), engine.calls)
+        self.assertIn(("archive", ["s-3"], False, "UNARCHIVE"), engine.calls)
 
 
 if __name__ == "__main__":

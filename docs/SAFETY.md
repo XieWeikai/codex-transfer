@@ -22,6 +22,12 @@ When a moved session receives a new turn, its rollout and SQLite state diverge f
 
 When a fork receives a new turn, undo would delete the new branch. Codex Relay hashes the created rollout and blocks undo after it changes.
 
+## Archive state
+
+Archive and Unarchive use Codex's official app-server methods. They do not delete conversation history or change Provider, but Codex may move the rollout and update its SQLite path. Relay therefore backs up both representations before every item, verifies the resulting archive bit and rollout, and records each batch item as an independent operation.
+
+Codex refuses archive operations when another process owns the thread or a spawned descendant. Relay also checks the per-thread writer lock before starting, but an idle visible UI tab is not necessarily locked. Close the task before changing archive state to avoid racing a process that is about to resume it.
+
 ## Backup privacy
 
 Backup generations contain full rollouts and SQLite snapshots. They can include prompts, commands, code, paths, tool output, and other sensitive material. The default directory is `~/.codex-session-manager` with user-only permissions where the platform supports them. The audit hash chain detects modification but is not a digital signature.

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .app_server import ForkAdapter, ForkResult
+from .app_server import ArchiveAdapter, ForkAdapter, ForkResult
 from .audit import AuditStore, sha256_database, sha256_file
 from .model import MigrationPlan, Risk, Session, require_safe_identifier
 from .repository import CodexRepository, RepositoryError
@@ -31,10 +31,12 @@ class MigrationEngine:
         repository: CodexRepository,
         audit: AuditStore,
         fork_adapter: ForkAdapter | None = None,
+        archive_adapter: ArchiveAdapter | None = None,
     ):
         self.repository = repository
         self.audit = audit
         self.fork_adapter = fork_adapter
+        self.archive_adapter = archive_adapter
         self.lock_path = audit.root / "manager.lock"
 
     def status(self, sessions: list[Session] | None = None) -> dict[str, Any]:
@@ -230,6 +232,225 @@ class MigrationEngine:
                 )
             )
         return plan
+
+    def preview_archive(self, session_ids: list[str], archived: bool) -> dict[str, Any]:
+        if not isinstance(archived, bool):
+            raise MigrationError("archived must be a JSON boolean")
+        if not session_ids:
+            raise MigrationError("Select at least one session")
+        sessions = self.repository.sessions_by_id(session_ids)
+        risks: list[Risk] = []
+        db_paths = {Path(session.db_path) for session in sessions}
+
+        for session in sessions:
+            if session.archived == archived:
+                risks.append(
+                    Risk(
+                        "critical",
+                        "archive-state-changed",
+                        f"会话 {session.id} 已经是{'已归档' if archived else '未归档'}状态。",
+                        "刷新列表，只选择状态与本次操作匹配的会话。",
+                    )
+                )
+            if session.locked:
+                risks.append(
+                    Risk(
+                        "critical",
+                        "session-active",
+                        f"会话 {session.id} 正被 Codex 写入。",
+                        "关闭或停止该 Codex 任务，然后重新运行预检。",
+                    )
+                )
+            if not Path(session.rollout_path).exists():
+                risks.append(
+                    Risk(
+                        "critical",
+                        "rollout-missing",
+                        f"会话 {session.id} 的 rollout 文件缺失。",
+                        "先从可靠备份恢复文件，或清理失效的数据库记录。",
+                    )
+                )
+
+        for db_path in db_paths:
+            integrity = self.repository.integrity_check(db_path)
+            if integrity != "ok":
+                risks.append(
+                    Risk(
+                        "critical",
+                        "database-integrity",
+                        f"SQLite 完整性检查失败：{db_path}，结果为 {integrity}",
+                        "归档前先修复或恢复 Codex 状态数据库。",
+                    )
+                )
+
+        if archived:
+            risks.append(
+                Risk(
+                    "warning",
+                    "archive-hides-session",
+                    "归档会让 Session 从 Codex 的默认活动列表中隐藏，但不会删除聊天记录。",
+                    "需要继续使用时，可通过还原归档重新显示；操作前仍会保留完整快照。",
+                )
+            )
+        else:
+            risks.append(
+                Risk(
+                    "info",
+                    "unarchive-preserves-session",
+                    "还原归档只恢复 Session 的可见状态，不会更改 Provider 或聊天内容。",
+                    "操作后刷新 Codex Desktop；若仍未显示，请检查当前 Project 筛选。",
+                )
+            )
+        if len(sessions) > 1:
+            risks.append(
+                Risk(
+                    "warning",
+                    "archive-batch-non-atomic",
+                    "批量操作会逐条执行，每条都有独立备份和审计记录，但整批不是原子事务。",
+                    "如果中途失败，已完成条目会保留，后续条目停止；请按操作记录逐条核对。",
+                )
+            )
+
+        return {
+            "archived": archived,
+            "sessions": [session.to_summary_dict() for session in sessions],
+            "risks": [risk.to_dict() for risk in risks],
+            "estimated_backup_bytes": sum(session.size_bytes for session in sessions)
+            + sum(path.stat().st_size for path in db_paths),
+            "executable": not any(risk.severity == "critical" for risk in risks),
+        }
+
+    def set_archived(
+        self, session_id: str, archived: bool, acknowledgement: str
+    ) -> dict[str, Any]:
+        expected_ack = "ARCHIVE" if archived else "UNARCHIVE"
+        if acknowledgement != expected_ack:
+            raise MigrationError(f"Risk acknowledgement must equal {expected_ack}")
+        if self.archive_adapter is None:
+            raise MigrationError("Codex app-server archive adapter is not configured")
+
+        with self._exclusive_lock():
+            plan = self.preview_archive([session_id], archived)
+            if not plan["executable"]:
+                raise MigrationError("Preflight has critical risks; archive state was not changed")
+            source = self.repository.sessions_by_id([session_id])[0]
+            kind = "archive" if archived else "unarchive"
+            operation_id, operation_dir = self.audit.new_operation(kind)
+            manifest = self._manifest_base(operation_id, kind, "preparing")
+            manifest.update(
+                {
+                    "session_ids": [source.id],
+                    "archived_before": source.archived,
+                    "archived_after": archived,
+                    "files": [],
+                    "post_files": [],
+                    "databases": [],
+                    "risks": plan["risks"],
+                }
+            )
+            self.audit.write_manifest(operation_dir, manifest)
+            changed = False
+            try:
+                file_entry = self.audit.backup_file(
+                    operation_dir,
+                    Path(source.rollout_path),
+                    f"rollout/{source.id}.jsonl",
+                )
+                file_entry["session_id"] = source.id
+                manifest["files"].append(file_entry)
+                db_entry = self.audit.backup_database(
+                    operation_dir, Path(source.db_path), 0
+                )
+                db_entry["session_ids"] = [source.id]
+                manifest["databases"].append(db_entry)
+                manifest["status"] = "backed_up"
+                self.audit.write_manifest(operation_dir, manifest)
+                self.audit.append_event(operation_id, kind, "backed_up", {})
+
+                self.archive_adapter.set_archived(source.id, archived)
+                changed = True
+                refreshed = self.repository.sessions_by_id([source.id])[0]
+                if refreshed.archived != archived:
+                    raise MigrationError("Codex returned without applying the requested archive state")
+                refreshed_path = Path(refreshed.rollout_path)
+                if not refreshed_path.exists():
+                    raise MigrationError("Archived session rollout is missing after the operation")
+                manifest["post_files"] = [
+                    {
+                        "session_id": refreshed.id,
+                        "source": refreshed.rollout_path,
+                        "after_sha256": sha256_file(refreshed_path),
+                        "size_bytes": refreshed.size_bytes,
+                    }
+                ]
+                manifest["databases"][0]["after_sha256"] = sha256_database(
+                    Path(refreshed.db_path)
+                )
+                manifest["status"] = "completed"
+                manifest["completed_at"] = self._now()
+                self.audit.write_manifest(operation_dir, manifest)
+                self.audit.append_event(
+                    operation_id,
+                    kind,
+                    "completed",
+                    {"session": source.id, "archived": archived},
+                )
+                return manifest
+            except Exception as exc:
+                rollback_error = None
+                # The app-server may apply the mutation before its response is lost.
+                # Re-read durable state so that a timeout cannot skip rollback.
+                with contextlib.suppress(Exception):
+                    current = self.repository.sessions_by_id([source.id])[0]
+                    changed = current.archived != source.archived
+                if changed:
+                    try:
+                        self.archive_adapter.set_archived(source.id, source.archived)
+                        rolled_back = self.repository.sessions_by_id([source.id])[0]
+                        if rolled_back.archived != source.archived:
+                            raise MigrationError("Codex did not restore the original archive state")
+                    except Exception as rollback_exc:
+                        rollback_error = str(rollback_exc)
+                manifest["status"] = "rollback_failed" if rollback_error else "rolled_back"
+                manifest["error"] = str(exc)
+                if rollback_error:
+                    manifest["rollback_error"] = rollback_error
+                manifest["completed_at"] = self._now()
+                self.audit.write_manifest(operation_dir, manifest)
+                self.audit.append_event(
+                    operation_id,
+                    kind,
+                    manifest["status"],
+                    {"error": str(exc), "rollback_error": rollback_error},
+                )
+                if rollback_error:
+                    raise MigrationError(
+                        f"{kind.title()} failed and automatic rollback also failed; "
+                        f"use backup {operation_id}: {exc}; rollback: {rollback_error}"
+                    ) from exc
+                raise MigrationError(f"{kind.title()} failed and was rolled back: {exc}") from exc
+
+    def set_archived_batch(
+        self, session_ids: list[str], archived: bool, acknowledgement: str
+    ) -> dict[str, Any]:
+        plan = self.preview_archive(session_ids, archived)
+        if not plan["executable"]:
+            raise MigrationError("Preflight has critical risks; archive batch was not started")
+        completed = []
+        failed = None
+        for session_id in session_ids:
+            try:
+                completed.append(self.set_archived(session_id, archived, acknowledgement))
+            except Exception as exc:
+                failed = {"session_id": session_id, "error": str(exc)}
+                break
+        return {
+            "requested_session_ids": session_ids,
+            "archived": archived,
+            "completed": completed,
+            "failed": failed,
+            "batch_atomic": False,
+        }
 
     def fork(self, session_id: str, target_provider: str, acknowledgement: str) -> dict[str, Any]:
         if acknowledgement != "FORK":

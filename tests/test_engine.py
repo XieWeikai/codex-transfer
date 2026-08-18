@@ -11,6 +11,11 @@ from codex_session_manager.audit import AuditStore
 from codex_session_manager.engine import MigrationEngine, MigrationError
 from codex_session_manager.repository import CodexRepository
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
+
 
 class FakeForkAdapter:
     def __init__(self, repository: CodexRepository):
@@ -43,6 +48,17 @@ class FakeForkAdapter:
                 (new_id, str(new_path), target_provider, thread_id),
             )
         return ForkResult(new_id, str(new_path), target_provider)
+
+    def set_archived(self, thread_id: str, archived: bool) -> None:
+        for db_path in self.repository.state_db_paths():
+            with sqlite3.connect(db_path) as conn:
+                changed = conn.execute(
+                    "UPDATE threads SET archived = ? WHERE id = ?",
+                    (int(archived), thread_id),
+                ).rowcount
+                if changed:
+                    return
+        raise RuntimeError(f"Unknown thread: {thread_id}")
 
 
 class MigrationEngineTest(unittest.TestCase):
@@ -105,8 +121,9 @@ class MigrationEngineTest(unittest.TestCase):
                 ("session-1", str(self.rollout)),
             )
         repository = CodexRepository(self.codex_home)
+        adapter = FakeForkAdapter(repository)
         self.engine = MigrationEngine(
-            repository, AuditStore(self.root / "manager"), FakeForkAdapter(repository)
+            repository, AuditStore(self.root / "manager"), adapter, adapter
         )
 
     def tearDown(self) -> None:
@@ -121,6 +138,20 @@ class MigrationEngineTest(unittest.TestCase):
         self.assertTrue(summary["title_truncated"])
         self.assertNotIn("rollout_path", summary)
         self.assertEqual(self.engine.repository.session_title("session-1"), "x" * 1000)
+
+    @unittest.skipIf(fcntl is None, "flock is unavailable")
+    def test_held_writer_lock_marks_session_active(self) -> None:
+        lock_dir = self.codex_home / "thread-writer-locks"
+        lock_dir.mkdir()
+        lock_path = lock_dir / "session-1.lock"
+        with lock_path.open("a+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertTrue(self.engine.repository.sessions_by_id(["session-1"])[0].locked)
+            plan = self.engine.preview_archive(["session-1"], True)
+            self.assertFalse(plan["executable"])
+            self.assertIn("session-active", {risk["code"] for risk in plan["risks"]})
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        self.assertFalse(self.engine.repository.sessions_by_id(["session-1"])[0].locked)
 
     def test_preview_execute_and_restore_round_trip(self) -> None:
         plan = self.engine.preview(["session-1"], "source", "target")
@@ -216,6 +247,67 @@ class MigrationEngineTest(unittest.TestCase):
     def test_execute_requires_exact_acknowledgement(self) -> None:
         with self.assertRaisesRegex(MigrationError, "MIGRATE"):
             self.engine.execute(["session-1"], "source", "target", "yes")
+
+    def test_archive_and_unarchive_are_audited_and_reversible(self) -> None:
+        archive_plan = self.engine.preview_archive(["session-1"], True)
+        self.assertTrue(archive_plan["executable"])
+        self.assertIn("archive-hides-session", {risk["code"] for risk in archive_plan["risks"]})
+
+        with self.assertRaisesRegex(MigrationError, "ARCHIVE"):
+            self.engine.set_archived("session-1", True, "yes")
+        archived = self.engine.set_archived("session-1", True, "ARCHIVE")
+        self.assertEqual(archived["kind"], "archive")
+        self.assertTrue(self.engine.repository.sessions_by_id(["session-1"])[0].archived)
+        self.assertTrue(archived["files"])
+        self.assertTrue(archived["databases"])
+
+        unarchived = self.engine.set_archived("session-1", False, "UNARCHIVE")
+        self.assertEqual(unarchived["kind"], "unarchive")
+        self.assertFalse(self.engine.repository.sessions_by_id(["session-1"])[0].archived)
+        self.assertTrue(self.engine.audit.verify_chain())
+
+    def test_archive_rejects_non_boolean_state(self) -> None:
+        with self.assertRaisesRegex(MigrationError, "JSON boolean"):
+            self.engine.preview_archive(["session-1"], "false")  # type: ignore[arg-type]
+
+    def test_archive_rolls_back_when_response_is_lost_after_mutation(self) -> None:
+        repository = self.engine.repository
+
+        class LostResponseAdapter(FakeForkAdapter):
+            def __init__(self, target: CodexRepository):
+                super().__init__(target)
+                self.first = True
+
+            def set_archived(self, thread_id: str, archived: bool) -> None:
+                super().set_archived(thread_id, archived)
+                if self.first:
+                    self.first = False
+                    raise TimeoutError("response lost")
+
+        self.engine.archive_adapter = LostResponseAdapter(repository)
+        with self.assertRaisesRegex(MigrationError, "was rolled back"):
+            self.engine.set_archived("session-1", True, "ARCHIVE")
+        self.assertFalse(repository.sessions_by_id(["session-1"])[0].archived)
+        operation = self.engine.audit.list_operations()[0]
+        self.assertEqual(operation["status"], "rolled_back")
+
+    def test_archive_batch_warns_that_execution_is_not_atomic(self) -> None:
+        second_rollout = self.rollout.with_name("rollout-session-2.jsonl")
+        second_rollout.write_text(
+            self.rollout.read_text(encoding="utf-8").replace("session-1", "session-2"),
+            encoding="utf-8",
+        )
+        with sqlite3.connect(self.db) as conn:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(threads)")]
+            select = ["?" if column in {"id", "rollout_path"} else column for column in columns]
+            conn.execute(
+                f"INSERT INTO threads ({', '.join(columns)}) "
+                f"SELECT {', '.join(select)} FROM threads WHERE id = ?",
+                ("session-2", str(second_rollout), "session-1"),
+            )
+        plan = self.engine.preview_archive(["session-1", "session-2"], True)
+        self.assertTrue(plan["executable"])
+        self.assertIn("archive-batch-non-atomic", {risk["code"] for risk in plan["risks"]})
 
     def test_metadata_mismatch_is_critical(self) -> None:
         with sqlite3.connect(self.db) as conn:

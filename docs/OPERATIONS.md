@@ -32,11 +32,23 @@ csm fork --session SESSION_ID --target TARGET --acknowledge FORK --json
 csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
 csm move --session SESSION_ID --source SOURCE --target TARGET --acknowledge MIGRATE --json
 
+csm archive-preview --session SESSION_ID --json
+csm archive --session SESSION_ID --acknowledge ARCHIVE --json
+
+csm unarchive-preview --session SESSION_ID --json
+csm unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+
 csm restore-preview --operation OPERATION_ID --json
 csm restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
-Repeat `--session` to select multiple sessions. Batch Fork executes one audited Fork at a time and is not atomic; if an item fails, completed items remain and later items are not attempted.
+Repeat `--session` to select multiple sessions. Batch Fork, Archive, and Unarchive execute one audited operation at a time and are not atomic; if an item fails, completed items remain and later items are not attempted.
+
+## Active-session detection
+
+Codex Relay checks `thread-writer-locks/<session-id>.lock`. If the file is absent, the session is not locked. If it exists, Relay attempts a non-blocking exclusive `flock`: success means the file is stale or idle and the session is safe; failure means another Codex process owns the writer lock and every mutation is blocked. On platforms without `flock`, an existing lock file is treated conservatively as active.
+
+This detects write ownership, not human attention. A session can be visible in an idle UI tab without holding the lock. Recent `updated_at` timestamps and process-name matching are not used because they cannot establish exclusive write safety.
 
 ## Fork workflow
 
@@ -57,6 +69,16 @@ An unchanged fork can be removed through Operations. Once it receives new histor
 4. Keep the backup until the moved sessions have been resumed and validated.
 
 Move rewrites the original rollout and index. Restoration is available only while neither the rollout nor the database has changed since migration.
+
+## Archive workflow
+
+1. Stop every selected Codex task and choose Archive or Unarchive in the workbench.
+2. Review the current-state and writer-lock preflight.
+3. Confirm with `ARCHIVE` or `UNARCHIVE`.
+4. Relay backs up the rollout and a consistent SQLite snapshot for each session.
+5. Relay invokes the official `thread/archive` or `thread/unarchive` app-server method and verifies the resulting indexed state.
+
+Archive changes default-list visibility and may move the rollout under Codex's archive storage. It does not delete history or change Provider. Batch operations are intentionally per-session so each completed item has an independent recovery authority.
 
 ## Custom locations
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Relay CLI"
-  short_description: "Safely inspect, fork, move, and restore Codex sessions"
+  short_description: "Safely inspect, fork, move, archive, and restore Codex sessions"
   default_prompt: "Use $codex-relay to inspect local Codex sessions and safely perform the requested provider operation."

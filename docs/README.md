@@ -4,6 +4,7 @@ Codex Relay manages local Codex session placement without pretending that provid
 
 - **Fork** creates a new durable Codex thread through the official app-server `thread/fork` interface and asks Codex to use the target `modelProvider`. The source is unchanged.
 - **Move** changes the original thread's provider bucket in both the rollout metadata and SQLite index.
+- **Archive / Unarchive** changes list visibility through the official app-server while preserving history and Provider.
 
 Read these documents before operating on important sessions:
 

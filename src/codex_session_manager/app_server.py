@@ -27,8 +27,12 @@ class ForkAdapter(Protocol):
     def fork(self, thread_id: str, target_provider: str) -> ForkResult: ...
 
 
+class ArchiveAdapter(Protocol):
+    def set_archived(self, thread_id: str, archived: bool) -> None: ...
+
+
 class CodexAppServer:
-    """Small stdio adapter around Codex's supported thread/fork interface."""
+    """Small stdio adapter around Codex's supported thread mutation interface."""
 
     def __init__(self, codex_home: Path, executable: str = "codex", timeout: float = 45.0):
         self.codex_home = codex_home.expanduser().resolve()
@@ -36,6 +40,30 @@ class CodexAppServer:
         self.timeout = timeout
 
     def fork(self, thread_id: str, target_provider: str) -> ForkResult:
+        result = self._request(
+            "thread/fork",
+            {
+                "threadId": thread_id,
+                "modelProvider": target_provider,
+                "excludeTurns": True,
+            },
+        )
+        thread = result.get("thread") or {}
+        new_id = thread.get("id")
+        rollout_path = thread.get("path")
+        if not new_id or not rollout_path:
+            raise AppServerError("Codex returned a fork without a durable thread id or path")
+        return ForkResult(
+            str(new_id),
+            str(rollout_path),
+            str(result.get("modelProvider") or target_provider),
+        )
+
+    def set_archived(self, thread_id: str, archived: bool) -> None:
+        method = "thread/archive" if archived else "thread/unarchive"
+        self._request(method, {"threadId": thread_id})
+
+    def _request(self, method: str, params: dict) -> dict:
         executable = shutil.which(self.executable)
         if executable is None:
             raise AppServerError(
@@ -77,26 +105,12 @@ class CodexAppServer:
             self._send(
                 process,
                 {
-                    "method": "thread/fork",
+                    "method": method,
                     "id": 2,
-                    "params": {
-                        "threadId": thread_id,
-                        "modelProvider": target_provider,
-                        "excludeTurns": True,
-                    },
+                    "params": params,
                 },
             )
-            result = self._response(process, 2)
-            thread = result.get("thread") or {}
-            new_id = thread.get("id")
-            rollout_path = thread.get("path")
-            if not new_id or not rollout_path:
-                raise AppServerError("Codex returned a fork without a durable thread id or path")
-            return ForkResult(
-                str(new_id),
-                str(rollout_path),
-                str(result.get("modelProvider") or target_provider),
-            )
+            return self._response(process, 2)
         finally:
             if process.stdin:
                 process.stdin.close()

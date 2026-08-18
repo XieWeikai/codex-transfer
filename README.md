@@ -27,6 +27,7 @@ Moving a Codex session is not a file rename. Current Codex discovery uses both r
 | Provider workspace | Browse compact session cards by provider, project, status, keyword, and update time. |
 | Safe Fork | Ask the official Codex app-server `thread/fork` interface to create a new durable thread under another provider. |
 | Audited Move | Update the original rollout and SQLite index only after preflight and explicit confirmation. |
+| Archive control | Archive or unarchive sessions through Codex app-server with per-session backup and audit records. |
 | Contextual risk review | Show credential, encrypted-content, writer-lock, provenance, and recovery risks at the point of action. |
 | Backup generations | Preserve rollout files, consistent SQLite snapshots, manifests, and SHA-256 values for every write. |
 | Conflict-aware recovery | Refuse automatic restore or fork removal when later conversation data would be overwritten. |
@@ -37,13 +38,14 @@ Moving a Codex session is not a file rename. Current Codex discovery uses both r
 ```text
 Codex home
   ├─ rollout JSONL ─┐
-  └─ state SQLite ──┴─> preflight ─> snapshot ─> fork / move ─> verify
+  └─ state SQLite ──┴─> preflight ─> snapshot ─> fork / move / archive ─> verify
                                       │                         │
                                       └──── audit manifest <────┘
 ```
 
 - **Fork** leaves the source unchanged and delegates new-thread creation to Codex app-server.
 - **Move** changes `session_meta.payload.model_provider` in the rollout and `threads.model_provider` in SQLite.
+- **Archive / Unarchive** use Codex app-server `thread/archive` and `thread/unarchive`; they change visibility, not history or Provider.
 - **Restore** is a new audited operation. It proceeds only when current hashes still match the recorded post-state.
 
 Credentials, API keys, OAuth state, provider definitions, base URLs, and model aliases are never copied or stored by Codex Relay.
@@ -53,7 +55,7 @@ Credentials, API keys, OAuth state, provider definitions, base URLs, and model a
 ### Requirements
 
 - Python 3.11 or newer
-- Codex CLI available on `PATH` for Fork operations
+- Codex CLI available on `PATH` for Fork and archive operations
 - A local Codex home using the supported `state_5.sqlite` thread schema
 
 ### Install
@@ -99,6 +101,8 @@ Running `codex-relay` or `csm` without a subcommand still starts the Web UI. The
 | `operations` | List backup and audit operations. |
 | `fork-preview` / `fork` | Preflight, then create provider forks with source preservation. |
 | `move-preview` / `move` | Preflight, then move original sessions between Provider buckets. |
+| `archive-preview` / `archive` | Preflight, then hide active sessions from the default Codex list. |
+| `unarchive-preview` / `unarchive` | Preflight, then return archived sessions to the active list. |
 | `restore-preview` / `restore` | Check divergence, then restore or undo an unchanged operation. |
 
 Use `--json` for machine-readable output. Repeat `--session` for multi-selection:
@@ -113,11 +117,18 @@ csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
 csm move --session SESSION_ID --source SOURCE --target TARGET \
   --acknowledge MIGRATE --json
 
+csm archive-preview --session SESSION_ID --json
+csm archive --session SESSION_ID --acknowledge ARCHIVE --json
+csm unarchive-preview --session SESSION_ID --json
+csm unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+
 csm restore-preview --operation OPERATION_ID --json
 csm restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
 Preview commands never write session state. Write commands rerun preflight, create the same backups and audit records as the Web UI, and require the same explicit confirmation words.
+
+A session is reported as `locked` when Codex Relay cannot acquire a non-blocking exclusive lock on `thread-writer-locks/<session-id>.lock`. This is a write-safety signal, not a recent-activity heuristic: an idle UI tab may be open without being locked, while a held writer lock always blocks mutations.
 
 ### Agent Skills
 

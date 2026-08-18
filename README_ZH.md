@@ -27,6 +27,7 @@ Codex Relay 是一个本地 Web 工作台，用于查看 Codex Session，并安�
 | Provider 工作区 | 按 Provider、Project、状态、关键词和更新时间浏览紧凑的 Session 卡片。 |
 | 安全 Fork | 调用 Codex 官方 app-server `thread/fork` 接口，在目标 Provider 下创建持久化的新 thread。 |
 | 可审计移动 | 仅在预检和明确确认后更新原 rollout 与 SQLite 索引。 |
+| 归档管理 | 通过 Codex app-server 归档或还原归档，每个 Session 都有独立备份和审计。 |
 | 上下文风险确认 | 在操作发生时展示凭据、加密内容、写入锁、来源追溯和恢复风险。 |
 | 备份代际 | 每次写操作都保存 rollout、SQLite 一致性快照、Manifest 和 SHA-256。 |
 | 分叉感知恢复 | 后续聊天可能被覆盖时，拒绝自动恢复或删除 Fork。 |
@@ -37,13 +38,14 @@ Codex Relay 是一个本地 Web 工作台，用于查看 Codex Session，并安�
 ```text
 Codex home
   ├─ rollout JSONL ─┐
-  └─ state SQLite ──┴─> 预检 ─> 快照 ─> Fork / 移动 ─> 验证
+  └─ state SQLite ──┴─> 预检 ─> 快照 ─> Fork / 移动 / 归档 ─> 验证
                                    │                    │
                                    └── 审计 Manifest <──┘
 ```
 
 - **Fork** 保留来源 Session，并把新 thread 的创建交给 Codex app-server。
 - **移动** 同时修改 rollout 中的 `session_meta.payload.model_provider` 和 SQLite 中的 `threads.model_provider`。
+- **归档 / 还原归档**调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。
 - **恢复** 本身也是一次新的审计操作。只有当前哈希仍与记录的操作后状态一致时才会执行。
 
 Codex Relay 不会复制或保存 API Key、OAuth 状态、Provider 定义、Base URL、模型别名或其他凭据。
@@ -53,7 +55,7 @@ Codex Relay 不会复制或保存 API Key、OAuth 状态、Provider 定义、Bas
 ### 环境要求
 
 - Python 3.11 或更高版本
-- 执行 Fork 时，`PATH` 中需要有 Codex CLI
+- 执行 Fork 或归档操作时，`PATH` 中需要有 Codex CLI
 - 本地 Codex home 使用当前支持的 `state_5.sqlite` thread schema
 
 ### 安装
@@ -99,6 +101,8 @@ codex-relay \
 | `operations` | 列出备份与审计操作。 |
 | `fork-preview` / `fork` | 预检后创建保留来源 Session 的 Provider Fork。 |
 | `move-preview` / `move` | 预检后在 Provider 分桶之间移动原 Session。 |
+| `archive-preview` / `archive` | 预检后从 Codex 默认活动列表中隐藏 Session。 |
+| `unarchive-preview` / `unarchive` | 预检后让已归档 Session 回到活动列表。 |
 | `restore-preview` / `restore` | 检查状态分叉后恢复或撤销未变化的操作。 |
 
 使用 `--json` 获取机器可读输出；重复 `--session` 可以多选：
@@ -113,11 +117,18 @@ csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
 csm move --session SESSION_ID --source SOURCE --target TARGET \
   --acknowledge MIGRATE --json
 
+csm archive-preview --session SESSION_ID --json
+csm archive --session SESSION_ID --acknowledge ARCHIVE --json
+csm unarchive-preview --session SESSION_ID --json
+csm unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+
 csm restore-preview --operation OPERATION_ID --json
 csm restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
 预检命令不会写入 Session 状态。写命令会重新执行预检，创建与 Web UI 完全相同的备份和审计记录，并要求相同的明确确认词。
+
+当 Relay 无法对 `thread-writer-locks/<session-id>.lock` 取得非阻塞独占锁时，Session 会显示为“使用中”。这是写入安全信号，不是“最近是否活跃”的推测：一个空闲 UI 标签页可能已打开但没有持锁，而只要 writer lock 被持有，所有写操作都会被阻断。
 
 ### Agent Skills
 
