@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .app_server import ForkAdapter, ForkResult
 from .audit import AuditStore, sha256_database, sha256_file
 from .model import MigrationPlan, Risk, require_safe_identifier
 from .repository import CodexRepository, RepositoryError
@@ -25,9 +26,15 @@ class MigrationError(RuntimeError):
 class MigrationEngine:
     """Deep module for previewing, executing and restoring provider migrations."""
 
-    def __init__(self, repository: CodexRepository, audit: AuditStore):
+    def __init__(
+        self,
+        repository: CodexRepository,
+        audit: AuditStore,
+        fork_adapter: ForkAdapter | None = None,
+    ):
         self.repository = repository
         self.audit = audit
+        self.fork_adapter = fork_adapter
         self.lock_path = audit.root / "manager.lock"
 
     def status(self) -> dict[str, Any]:
@@ -185,16 +192,129 @@ class MigrationEngine:
         rollout_size = sum(session.size_bytes for session in sessions)
         return MigrationPlan(source, target, sessions, risks, trace_profiles, db_size + rollout_size)
 
+    def preview_fork(self, session_id: str, target_provider: str) -> MigrationPlan:
+        session = self.repository.sessions_by_id([session_id])[0]
+        plan = self.preview([session_id], session.provider, target_provider)
+        plan.risks.append(
+            Risk(
+                "info",
+                "source-preserved",
+                "Fork 会创建新的 Codex thread，原会话及其 provider 归属保持不变。",
+                "新 Fork 仍可能无法在目标后端解密历史 encrypted_content；先验证新副本再继续工作。",
+            )
+        )
+        return plan
+
+    def fork(self, session_id: str, target_provider: str, acknowledgement: str) -> dict[str, Any]:
+        if acknowledgement != "FORK":
+            raise MigrationError("Risk acknowledgement must equal FORK")
+        if self.fork_adapter is None:
+            raise MigrationError("Codex app-server fork adapter is not configured")
+        with self._exclusive_lock():
+            plan = self.preview_fork(session_id, target_provider)
+            if not plan.executable:
+                raise MigrationError("Preflight has critical risks; fork was not started")
+            source = plan.sessions[0]
+            operation_id, operation_dir = self.audit.new_operation("fork")
+            manifest = self._manifest_base(operation_id, "fork", "preparing")
+            manifest.update(
+                {
+                    "source_provider": source.provider,
+                    "target_provider": plan.target_provider,
+                    "session_ids": [source.id],
+                    "forked_session_ids": [],
+                    "files": [],
+                    "created_files": [],
+                    "databases": [],
+                    "risks": [risk.to_dict() for risk in plan.risks],
+                }
+            )
+            self.audit.write_manifest(operation_dir, manifest)
+            result: ForkResult | None = None
+            try:
+                source_backup = self.audit.backup_file(
+                    operation_dir, Path(source.rollout_path), f"source/{source.id}.jsonl"
+                )
+                source_backup["session_id"] = source.id
+                manifest["files"].append(source_backup)
+                db_path = Path(source.db_path)
+                db_backup = self.audit.backup_database(operation_dir, db_path, 0)
+                db_backup["session_ids"] = [source.id]
+                manifest["databases"].append(db_backup)
+                manifest["status"] = "backed_up"
+                self.audit.write_manifest(operation_dir, manifest)
+                self.audit.append_event(operation_id, "fork", "backed_up", {})
+
+                result = self.fork_adapter.fork(source.id, plan.target_provider)
+                forked = self.repository.sessions_by_id([result.thread_id])[0]
+                if forked.provider != plan.target_provider or forked.rollout_provider != plan.target_provider:
+                    raise MigrationError("Codex created the fork under an unexpected provider")
+                if Path(forked.rollout_path).resolve() != Path(result.rollout_path).resolve():
+                    raise MigrationError("Codex fork path does not match the indexed rollout path")
+                manifest["forked_session_ids"] = [forked.id]
+                manifest["created_files"] = [
+                    {
+                        "session_id": forked.id,
+                        "source": forked.rollout_path,
+                        "after_sha256": sha256_file(Path(forked.rollout_path)),
+                        "size_bytes": forked.size_bytes,
+                    }
+                ]
+                manifest["databases"][0]["after_sha256"] = sha256_database(db_path)
+                manifest["status"] = "completed"
+                manifest["completed_at"] = self._now()
+                self.audit.write_manifest(operation_dir, manifest)
+                self.audit.append_event(
+                    operation_id,
+                    "fork",
+                    "completed",
+                    {"source": source.id, "forked": forked.id},
+                )
+                return manifest
+            except Exception as exc:
+                if result is not None:
+                    with contextlib.suppress(Exception):
+                        self.repository.delete_fork(
+                            Path(source.db_path), result.thread_id, Path(result.rollout_path)
+                        )
+                manifest["status"] = "rolled_back"
+                manifest["error"] = str(exc)
+                manifest["completed_at"] = self._now()
+                self.audit.write_manifest(operation_dir, manifest)
+                self.audit.append_event(operation_id, "fork", "rolled_back", {"error": str(exc)})
+                raise MigrationError(f"Fork failed and was rolled back: {exc}") from exc
+
     def preview_restore(self, operation_id: str) -> dict[str, Any]:
         original = self.audit.read_manifest(operation_id)
-        if original.get("kind") != "migration" or original.get("status") != "completed":
-            raise MigrationError("Only completed migration operations can be restored")
+        if original.get("kind") not in {"migration", "fork"} or original.get("status") != "completed":
+            raise MigrationError("Only completed migration or fork operations can be restored")
         if original.get("restored_by"):
-            raise MigrationError("This migration has already been restored")
-        current_sessions = self.repository.sessions_by_id(original["session_ids"])
+            raise MigrationError("This operation has already been restored")
+        restore_ids = (
+            original.get("forked_session_ids", [])
+            if original.get("kind") == "fork"
+            else original["session_ids"]
+        )
+        try:
+            current_sessions = self.repository.sessions_by_id(restore_ids)
+        except RepositoryError:
+            current_sessions = []
         locked = [session.id for session in current_sessions if session.locked]
-        changed = self._post_state_changes(original)
+        changed = (
+            self._created_file_changes(original)
+            if original.get("kind") == "fork"
+            else self._post_state_changes(original)
+        )
         risks = []
+        if len(current_sessions) != len(restore_ids):
+            risks.append(
+                Risk(
+                    "critical",
+                    "fork-missing",
+                    "审计记录中的 Fork 已经不存在或未被 Codex 索引。",
+                    "不要自动撤销；先检查操作清单和 Codex 状态数据库。",
+                )
+            )
         if locked:
             risks.append(
                 Risk(
@@ -209,21 +329,32 @@ class MigrationEngine:
                 Risk(
                     "critical",
                     "trace-diverged",
-                    "迁移后的会话或索引已经变化，当前历史与迁移快照发生分叉。",
-                    "原地恢复会删除新增聊天，因此已阻止。请保留当前状态，或从旧快照创建独立副本。",
+                    "操作后的会话已经变化，当前历史与审计快照发生分叉。",
+                    "恢复会删除新增聊天，因此已阻止。请保留当前状态，或从旧快照创建独立副本。",
                 )
             )
-        risks.append(
-            Risk(
-                "warning",
-                "restore-provenance-limit",
-                "恢复只能还原迁移前字节，不能证明混合 trace 中每轮消息的 provider 来源。",
-                "恢复后仍需使用原 provider 验证会话；凭据和 provider 配置不会随快照恢复。",
+        if original.get("kind") == "fork":
+            risks.append(
+                Risk(
+                    "warning",
+                    "fork-removal",
+                    "撤销会删除新 Fork 的 rollout 与索引；原 Session 不会改变。",
+                    "只在确认新 Fork 未承载需要保留的工作时执行；目标 provider 凭据不会改变。",
+                )
             )
-        )
+        else:
+            risks.append(
+                Risk(
+                    "warning",
+                    "restore-provenance-limit",
+                    "恢复只能还原迁移前字节，不能证明混合 trace 中每轮消息的 provider 来源。",
+                    "恢复后仍需使用原 provider 验证会话；凭据和 provider 配置不会随快照恢复。",
+                )
+            )
         return {
             "operation_id": operation_id,
-            "session_ids": original["session_ids"],
+            "kind": original["kind"],
+            "session_ids": restore_ids,
             "changed_paths": changed,
             "risks": [risk.to_dict() for risk in risks],
             "executable": not any(risk.severity == "critical" for risk in risks),
@@ -313,6 +444,8 @@ class MigrationEngine:
             if not restore_plan["executable"]:
                 raise MigrationError("恢复预检发现阻断风险；当前状态未被修改")
             original = self.audit.read_manifest(operation_id)
+            if original.get("kind") == "fork":
+                return self._restore_fork(original)
             self._assert_post_hashes(original)
 
             restore_id, restore_dir = self.audit.new_operation("restore")
@@ -358,6 +491,52 @@ class MigrationEngine:
                 self.audit.append_event(restore_id, "restore", "rolled_back", {"error": str(exc)})
                 raise MigrationError(f"Restore failed and current state was recovered: {exc}") from exc
 
+    def _restore_fork(self, original: dict[str, Any]) -> dict[str, Any]:
+        forked = self.repository.sessions_by_id(original["forked_session_ids"])[0]
+        restore_id, restore_dir = self.audit.new_operation("restore")
+        manifest = self._manifest_base(restore_id, "restore", "preparing")
+        manifest.update(
+            {
+                "restores_operation": original["operation_id"],
+                "restores_kind": "fork",
+                "session_ids": [forked.id],
+                "files": [],
+                "databases": [],
+            }
+        )
+        try:
+            backup = self.audit.backup_file(
+                restore_dir, Path(forked.rollout_path), f"fork/{forked.id}.jsonl"
+            )
+            backup["session_id"] = forked.id
+            manifest["files"].append(backup)
+            db_backup = self.audit.backup_database(restore_dir, Path(forked.db_path), 0)
+            db_backup["session_ids"] = [forked.id]
+            manifest["databases"].append(db_backup)
+            self.audit.write_manifest(restore_dir, manifest)
+            self.repository.delete_fork(
+                Path(forked.db_path), forked.id, Path(forked.rollout_path)
+            )
+            manifest["status"] = "completed"
+            manifest["completed_at"] = self._now()
+            self.audit.write_manifest(restore_dir, manifest)
+            original["restored_by"] = restore_id
+            original["restored_at"] = self._now()
+            self.audit.write_manifest(self.audit.operations / original["operation_id"], original)
+            self.audit.append_event(
+                restore_id, "restore", "completed", {"source": original["operation_id"]}
+            )
+            return manifest
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                self._restore_entries(restore_dir, manifest, check_hashes=False)
+            manifest["status"] = "rolled_back"
+            manifest["error"] = str(exc)
+            manifest["completed_at"] = self._now()
+            self.audit.write_manifest(restore_dir, manifest)
+            self.audit.append_event(restore_id, "restore", "rolled_back", {"error": str(exc)})
+            raise MigrationError(f"Fork restore failed and current state was recovered: {exc}") from exc
+
     def _verify_result(self, plan: MigrationPlan) -> None:
         refreshed = {session.id: session for session in self.repository.scan_sessions()}
         failures = [
@@ -388,6 +567,15 @@ class MigrationEngine:
         for entry in manifest["databases"]:
             path = Path(entry["source"])
             if not path.exists() or sha256_database(path) != entry.get("after_sha256"):
+                changed.append(str(path))
+        return changed
+
+    @staticmethod
+    def _created_file_changes(manifest: dict[str, Any]) -> list[str]:
+        changed = []
+        for entry in manifest.get("created_files", []):
+            path = Path(entry["source"])
+            if not path.exists() or sha256_file(path) != entry.get("after_sha256"):
                 changed.append(str(path))
         return changed
 

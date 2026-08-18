@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="graphite">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Codex Relay Docs</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body class="docs-body">
+  <a class="skip-link" href="#docsContent">跳到文档正文</a>
+  <header class="docs-header">
+    <a class="docs-brand" href="/"><span class="docs-logo" aria-hidden="true"></span><strong>Codex Relay</strong><small>Docs</small></a>
+    <label class="docs-search"><span>搜索</span><input id="docsSearch" type="search" placeholder="搜索原理、Fork、恢复或安装" aria-label="搜索文档"></label>
+    <div class="docs-header-actions">
+      <label class="theme-control"><span>主题</span><select id="themeSelect" aria-label="界面主题"><option value="graphite">石墨</option><option value="cloud">云白</option><option value="contrast">高对比</option></select></label>
+      <a class="button button-primary header-link" href="/">打开工作台</a>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" aria-label="文档导航">
+      <span class="docs-nav-label">开始</span>
+      <a href="#overview">概览</a>
+      <a href="#mental-model">核心原理</a>
+      <a href="#storage">存储模型</a>
+      <span class="docs-nav-label">操作</span>
+      <a href="#fork">Fork 到 Provider</a>
+      <a href="#move">移动 Session</a>
+      <a href="#recovery">备份与恢复</a>
+      <span class="docs-nav-label">参考</span>
+      <a href="#risk">风险模型</a>
+      <a href="#install">安装与启动</a>
+      <a href="#limits">能力边界</a>
+    </aside>
+
+    <main class="docs-content" id="docsContent">
+      <article id="overview" data-doc-section data-keywords="overview session provider fork move">
+        <p class="docs-eyebrow">LOCAL SESSION OPERATIONS</p>
+        <h1>理解 Session，再安全地改变它</h1>
+        <p class="docs-lead">Codex Relay 在本机管理 Codex Session 的 Provider 归属。它优先保留原始数据，所有写操作都经过预检、快照、审计和结果验证。</p>
+        <div class="docs-callout safe"><strong>默认选择 Fork</strong><p>Fork 创建独立 thread，原 Session 不变。只有明确需要改变原会话归属时才使用移动。</p></div>
+      </article>
+
+      <article id="mental-model" data-doc-section data-keywords="principle model provider credential encrypted content">
+        <h2>核心原理</h2>
+        <p>Session 不是一段纯文本聊天。它由 rollout 事件流、SQLite 索引、项目与工作目录信息，以及模型后端产生的状态共同构成。Provider 迁移只改变“由谁接管下一次恢复”的路由信息，不会转换内部协议。</p>
+        <div class="docs-flow" aria-label="Session 操作数据流">
+          <span>rollout JSONL</span><b>+</b><span>SQLite thread</span><b>→</b><span>预检与快照</span><b>→</b><span>Fork 或移动</span><b>→</b><span>哈希验证</span>
+        </div>
+        <h3>Provider 标识不等于凭据</h3>
+        <p><code>model_provider</code> 是路由和列表分桶标识。API Key、OAuth、Base URL 与模型映射存在于独立配置中，Codex Relay 从不复制或备份它们。</p>
+      </article>
+
+      <article id="storage" data-doc-section data-keywords="jsonl sqlite model_provider session_meta state database">
+        <h2>存储模型</h2>
+        <p>当前 Codex 同时在 rollout 的 <code>session_meta.payload.model_provider</code> 和 <code>state_5.sqlite.threads.model_provider</code> 中记录 Provider。移动必须协调修改两处；Fork 则交给 Codex app-server 创建完整的新 thread。</p>
+        <table><thead><tr><th>数据</th><th>职责</th><th>操作方式</th></tr></thead><tbody>
+          <tr><td>rollout JSONL</td><td>持久化事件、消息与推理状态</td><td>移动时原子替换；Fork 由 Codex 创建</td></tr>
+          <tr><td>SQLite</td><td>列表索引、Provider、项目和状态</td><td>事务更新或由 app-server 写入</td></tr>
+          <tr><td>审计目录</td><td>快照、Manifest、SHA-256 与事件链</td><td>每次写操作创建新代际</td></tr>
+        </tbody></table>
+      </article>
+
+      <article id="fork" data-doc-section data-keywords="fork provider app server source preserve branch">
+        <h2>Fork 到另一个 Provider</h2>
+        <p>Fork 使用 Codex 官方 <code>thread/fork</code> interface，并传入目标 <code>modelProvider</code>。Codex 负责历史复制、lineage、新 thread ID、rollout 与索引写入，Relay 负责前后快照、风险确认和审计。</p>
+        <ol><li>确认源 Session 未被写入。</li><li>备份源 rollout 与一致性 SQLite 快照。</li><li>启动同一 <code>CODEX_HOME</code> 的短生命周期 app-server。</li><li>调用 <code>thread/fork</code>，验证新 thread 的 Provider 与路径。</li><li>记录新 rollout 哈希；未发生变化前允许撤销。</li></ol>
+        <div class="docs-callout warning"><strong>Fork 不是格式转换</strong><p>它保留历史中的 <code>encrypted_content</code>。目标后端仍可能无法解密，但源 Session 不受影响。</p></div>
+      </article>
+
+      <article id="move" data-doc-section data-keywords="move migration rewrite original provider">
+        <h2>移动原 Session</h2>
+        <p>移动会在完整备份后原子改写 rollout Provider，并在 SQLite 事务中更新同一批 thread。任何一步失败都会尝试恢复迁移前快照。</p>
+        <p>移动适合需要让原 thread 出现在另一个 Provider 历史桶的场景。它的恢复条件更严格：迁移后只要 rollout 或数据库发生变化，自动恢复就会阻断。</p>
+      </article>
+
+      <article id="recovery" data-doc-section data-keywords="backup restore audit hash divergence undo">
+        <h2>备份、审计与恢复</h2>
+        <p>操作 Manifest 记录输入 Session、目标 Provider、风险、文件路径、备份位置和前后哈希。审计 JSONL 使用前一事件哈希形成可检测篡改的链。</p>
+        <h3>三种不同的恢复</h3>
+        <dl class="docs-definitions"><dt>字节恢复</dt><dd>把文件和数据库恢复为旧快照，可能丢弃后续变化。</dd><dt>功能恢复</dt><dd>Session 能继续运行，依赖凭据、模型和后端兼容性，无法保证。</dd><dt>来源恢复</dt><dd>重建每轮消息的 Provider 来源；trace 缺少可靠逐轮标记，无法自动完成。</dd></dl>
+      </article>
+
+      <article id="risk" data-doc-section data-keywords="risk encrypted_content credential mixed trace provenance">
+        <h2>风险模型</h2>
+        <table><thead><tr><th>风险</th><th>为什么发生</th><th>Relay 的处理</th></tr></thead><tbody>
+          <tr><td>加密推理不可移植</td><td>后端生成不透明 <code>encrypted_content</code></td><td>计数并在确认时告警</td></tr>
+          <tr><td>目标凭据缺失</td><td>Provider 标签不携带认证</td><td>不接触密钥，要求独立配置</td></tr>
+          <tr><td>混合来源不可追溯</td><td>没有可靠的逐轮 Provider 字段</td><td>明确提示，禁止声称无损恢复</td></tr>
+          <tr><td>并发写入</td><td>Codex 与 Relay 同时修改状态</td><td>检查 writer lock 并阻断</td></tr>
+          <tr><td>恢复覆盖新聊天</td><td>操作后状态已经分叉</td><td>比较哈希并阻断自动恢复</td></tr>
+        </tbody></table>
+      </article>
+
+      <article id="install" data-doc-section data-keywords="install terminal command csm codex relay python">
+        <h2>安装与启动</h2>
+        <pre><code>./install.sh
+codex-relay
+
+# 短命令
+csm</code></pre>
+        <p>安装器要求 Python 3.11+，创建隔离环境，并在 <code>~/.local/bin</code> 提供两个命令。它不会覆盖同名普通文件。默认服务地址为 <code>http://127.0.0.1:8765</code>。</p>
+        <pre><code>codex-relay \
+  --codex-home /path/to/.codex \
+  --data-dir /private/backup/path \
+  --codex-bin /path/to/codex \
+  --port 8765</code></pre>
+      </article>
+
+      <article id="limits" data-doc-section data-keywords="limits remote project schema signature">
+        <h2>能力边界</h2>
+        <ul><li>Codex 本地存储和实验性 app-server 字段可能随版本变化，未知结构应当拒绝写入。</li><li>当前版本管理本机 <code>CODEX_HOME</code>；SSH 远程项目和项目导入仍属于后续能力。</li><li>哈希链可检测意外修改，但不是签名，拥有文件写权限的攻击者可以重写日志与备份。</li><li>备份包含完整聊天和工具输出，应存放在私密磁盘并纳入用户自己的保留策略。</li></ul>
+      </article>
+
+      <p class="docs-empty" id="docsEmpty" hidden>没有匹配的文档内容。</p>
+    </main>
+
+    <aside class="docs-toc" aria-label="本页目录"><span>本页</span><a href="#mental-model">核心原理</a><a href="#fork">Fork</a><a href="#recovery">恢复</a><a href="#risk">风险</a><a href="#install">安装</a></aside>
+  </div>
+  <script src="/docs.js"></script>
+</body>
+</html>

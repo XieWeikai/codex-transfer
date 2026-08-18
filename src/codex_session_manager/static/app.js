@@ -6,6 +6,7 @@ const state = {
   selected: new Set(),
   activeProvider: null,
   filter: "all",
+  action: "fork",
   plan: null,
   restoreId: null,
   restorePlan: null,
@@ -20,6 +21,16 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 })[char]);
+
+function applyTheme(theme) {
+  const allowed = ["graphite", "cloud", "contrast"];
+  const selected = allowed.includes(theme) ? theme : "graphite";
+  document.documentElement.dataset.theme = selected;
+  localStorage.setItem("codex-relay-theme", selected);
+  if ($("#themeSelect")) $("#themeSelect").value = selected;
+}
+
+applyTheme(localStorage.getItem("codex-relay-theme") || "graphite");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -109,11 +120,33 @@ function observedProviders() {
 }
 
 function renderAll() {
+  renderActionMode();
   renderProviders();
   renderTargets();
   renderSessions();
   renderQueue();
   renderOperations();
+}
+
+function renderActionMode() {
+  const fork = state.action === "fork";
+  $$(".action-mode").forEach(button => {
+    const active = button.dataset.action === state.action;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  $("#actionKicker").textContent = fork ? "FORK QUEUE" : "MOVE QUEUE";
+  $("#actionHeading").textContent = fork ? "Fork 工作区" : "移动工作区";
+  $("#dropTitle").textContent = fork ? "拖拽一个 Session 创建 Fork" : "拖拽 Session 到这里移动";
+  $("#dropHint").textContent = fork ? "原会话保持不变，也可以点按“加入”" : "原会话将切换归属，也可以点按“加入”";
+  $("#queueLabel").textContent = fork ? "待 Fork" : "待移动";
+  $("#selectedLabel").textContent = fork ? "条待 Fork" : "条待移动";
+  $("#previewButtonLabel").textContent = fork ? "检查并 Fork" : "检查并移动";
+  $("#actionNote").textContent = fork
+    ? "Fork 通过 Codex 官方 app-server 创建，并保留原会话。"
+    : "移动会改写原会话归属；执行前会完整备份并要求确认。";
+  $("#selectAll").disabled = fork;
+  $("#selectAll").closest("label").title = fork ? "Fork 模式一次只处理一个 Session" : "";
 }
 
 function renderProviders() {
@@ -321,11 +354,18 @@ function setSessionSelected(id, selected) {
     toast(`一次迁移只能包含同一来源 provider。当前来源是 ${source}。`, true);
     return;
   }
+  if (selected && state.action === "fork") state.selected.clear();
   selected ? state.selected.add(id) : state.selected.delete(id);
   state.plan = null;
   renderTargets();
   renderSessions();
   renderQueue();
+  if (selected && window.matchMedia("(max-width: 1024px)").matches) {
+    requestAnimationFrame(() => $(".transfer-panel").scrollIntoView({
+      behavior: "auto",
+      block: "start",
+    }));
+  }
 }
 
 function renderQueue() {
@@ -336,7 +376,8 @@ function renderQueue() {
   $("#backupSummary").textContent = state.plan
     ? formatBytes(state.plan.estimated_backup_bytes)
     : sessions.length ? `至少 ${formatBytes(sessions.reduce((sum, session) => sum + session.size_bytes, 0))}` : "—";
-  $("#previewButton").disabled = sessions.length === 0 || !$("#targetProvider").value;
+  const invalidCount = state.action === "fork" ? sessions.length !== 1 : sessions.length === 0;
+  $("#previewButton").disabled = invalidCount || !$("#targetProvider").value;
   $("#transferQueue").innerHTML = sessions.length ? sessions.map(session => `
     <div class="queue-item"><span></span><div><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.title)}">×</button></div>
   `).join("") : '<div class="queue-empty">队列为空<br>拖入或点按“加入”开始</div>';
@@ -346,10 +387,12 @@ function renderQueue() {
 function renderOperations() {
   $("#operationCount").textContent = state.operations.length;
   $("#operations").innerHTML = state.operations.length ? state.operations.map(operation => {
-    const canRestore = operation.kind === "migration" && operation.status === "completed" && !operation.restored_by;
+    const canRestore = ["migration", "fork"].includes(operation.kind) && operation.status === "completed" && !operation.restored_by;
     const route = operation.kind === "migration"
       ? `${escapeHtml(operation.source_provider)} → ${escapeHtml(operation.target_provider)}`
-      : `恢复 ${escapeHtml(operation.restores_operation || "snapshot")}`;
+      : operation.kind === "fork"
+        ? `${escapeHtml(operation.source_provider)} ↗ ${escapeHtml(operation.target_provider)} · Fork`
+        : `恢复 ${escapeHtml(operation.restores_operation || "snapshot")}`;
     const status = operation.restored_by ? "已恢复" : operation.status;
     return `<article class="operation"><div class="operation-top"><strong class="operation-route">${route}</strong><span class="operation-status ${escapeHtml(operation.status)}">${escapeHtml(status)}</span></div><div class="operation-bottom"><span>${escapeHtml(new Date(operation.created_at).toLocaleString("zh-CN"))} · ${(operation.session_ids || []).length} sessions</span>${canRestore ? `<button class="restore-button" type="button" data-id="${escapeHtml(operation.operation_id)}">恢复</button>` : `<code>${escapeHtml(operation.operation_id)}</code>`}</div></article>`;
   }).join("") : '<div class="empty-state"><div><strong>还没有操作记录</strong><p>完成一次迁移后，审计记录会显示在这里。</p></div></div>';
@@ -361,6 +404,16 @@ async function openMigrationDialog() {
   const target = $("#targetProvider").value;
   if (!sessions.length || !target) return;
   const dialog = $("#migrationDialog");
+  const fork = state.action === "fork";
+  const acknowledgement = fork ? "FORK" : "MIGRATE";
+  $("#dialogKicker").textContent = fork ? "FORK CHECK" : "MOVE CHECK";
+  $("#dialogTitle").textContent = fork ? "确认 Fork 风险" : "确认移动风险";
+  $("#compatibilityText").textContent = fork
+    ? "我已确认目标 provider 已配置，并理解新 Fork 的加密推理可能无法继续使用。"
+    : "我已确认目标 provider 已配置，并理解原会话归属将被改写。";
+  $("#actionAckCode").textContent = acknowledgement;
+  $("#migrateAck").placeholder = acknowledgement;
+  $("#migrateButton").textContent = fork ? "创建备份并 Fork" : "创建备份并移动";
   $("#dialogSource").textContent = sessions[0].provider;
   $("#dialogTarget").textContent = target;
   $("#dialogCount").textContent = sessions.length;
@@ -372,11 +425,11 @@ async function openMigrationDialog() {
   $("#migrateButton").disabled = true;
   dialog.showModal();
   try {
-    state.plan = await api("/api/preview", {method: "POST", body: JSON.stringify({
-      session_ids: sessions.map(session => session.id),
-      source_provider: sessions[0].provider,
-      target_provider: target,
-    })});
+    const previewPath = fork ? "/api/fork/preview" : "/api/preview";
+    const payload = fork
+      ? {session_id: sessions[0].id, target_provider: target}
+      : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: target};
+    state.plan = await api(previewPath, {method: "POST", body: JSON.stringify(payload)});
     const critical = state.plan.risks.filter(risk => risk.severity === "critical").length;
     $("#preflightStatus").className = `preflight-status ${critical ? "bad" : "ok"}`;
     $("#preflightStatus").innerHTML = `<span></span><strong>${critical ? `预检发现 ${critical} 项阻断问题` : "预检通过，可以创建备份"}</strong>`;
@@ -393,25 +446,26 @@ async function openMigrationDialog() {
 }
 
 function updateMigrateButton() {
+  const acknowledgement = state.action === "fork" ? "FORK" : "MIGRATE";
   $("#migrateButton").disabled = !state.plan?.executable
     || !$("#compatibilityAck").checked
-    || $("#migrateAck").value !== "MIGRATE";
+    || $("#migrateAck").value !== acknowledgement;
 }
 
 async function migrate() {
   $("#migrateButton").disabled = true;
   const sessions = selectedSessions();
   try {
-    const result = await api("/api/migrate", {method: "POST", body: JSON.stringify({
-      session_ids: sessions.map(session => session.id),
-      source_provider: sessions[0].provider,
-      target_provider: $("#targetProvider").value,
-      acknowledgement: $("#migrateAck").value,
-    })});
+    const fork = state.action === "fork";
+    const path = fork ? "/api/fork" : "/api/migrate";
+    const payload = fork
+      ? {session_id: sessions[0].id, target_provider: $("#targetProvider").value, acknowledgement: $("#migrateAck").value}
+      : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: $("#targetProvider").value, acknowledgement: $("#migrateAck").value};
+    const result = await api(path, {method: "POST", body: JSON.stringify(payload)});
     $("#migrationDialog").close();
     state.selected.clear();
     state.plan = null;
-    toast(`迁移完成。操作 ${result.operation_id} 已备份并写入审计账本。`);
+    toast(`${fork ? "Fork" : "移动"}完成。操作 ${result.operation_id} 已备份并写入审计账本。`);
     await load();
   } catch (error) {
     toast(error.message, true);
@@ -454,6 +508,7 @@ async function openRestore(operationId) {
       method: "POST", body: "{}",
     });
     const blocked = !state.restorePlan.executable;
+    $("#restoreDialog h2").textContent = state.restorePlan.kind === "fork" ? "撤销 Fork 副本" : "恢复迁移前状态";
     $("#restorePreflight").className = `preflight-status ${blocked ? "bad" : "ok"}`;
     $("#restorePreflight").innerHTML = `<span></span><strong>${blocked ? "当前历史已分叉，无法无损恢复" : "快照与迁移后状态一致"}</strong>`;
     $("#restoreRiskList").innerHTML = state.restorePlan.risks.map(risk => `
@@ -491,15 +546,29 @@ function setupEvents() {
   document.addEventListener("mousemove", moveMouseDrag);
   document.addEventListener("mouseup", finishMouseDrag);
   $("#refreshButton").addEventListener("click", load);
+  $("#themeSelect").addEventListener("change", event => applyTheme(event.target.value));
   $("#search").addEventListener("input", debounce(renderSessions, 120));
   $("#sortSessions").addEventListener("change", renderSessions);
   $("#targetProvider").addEventListener("change", () => { state.plan = null; renderQueue(); });
   $("#clearSelection").addEventListener("click", () => { state.selected.clear(); state.plan = null; renderAll(); });
+  $$(".action-mode").forEach(button => button.addEventListener("click", () => {
+    state.action = button.dataset.action;
+    state.plan = null;
+    if (state.action === "fork" && state.selected.size > 1) {
+      const first = state.selected.values().next().value;
+      state.selected = new Set(first ? [first] : []);
+    }
+    renderAll();
+  }));
   $("#selectAll").addEventListener("change", event => {
     const source = selectedSource();
     visibleSessions().forEach(session => {
       if (!session.locked && (!source || source === session.provider)) {
-        event.target.checked ? state.selected.add(session.id) : state.selected.delete(session.id);
+        if (state.action === "fork" && event.target.checked) {
+          state.selected = new Set([session.id]);
+        } else {
+          event.target.checked ? state.selected.add(session.id) : state.selected.delete(session.id);
+        }
       }
     });
     state.plan = null;

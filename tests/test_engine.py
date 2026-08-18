@@ -6,9 +6,43 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from codex_session_manager.app_server import ForkResult
 from codex_session_manager.audit import AuditStore
 from codex_session_manager.engine import MigrationEngine, MigrationError
 from codex_session_manager.repository import CodexRepository
+
+
+class FakeForkAdapter:
+    def __init__(self, repository: CodexRepository):
+        self.repository = repository
+
+    def fork(self, thread_id: str, target_provider: str) -> ForkResult:
+        source = self.repository.sessions_by_id([thread_id])[0]
+        new_id = "fork-session-1"
+        new_path = Path(source.rollout_path).with_name(f"rollout-fork-{new_id}.jsonl")
+        lines = []
+        for line in Path(source.rollout_path).read_text(encoding="utf-8").splitlines():
+            value = json.loads(line)
+            if value.get("type") == "session_meta":
+                value["payload"]["id"] = new_id
+                value["payload"]["model_provider"] = target_provider
+                value["payload"]["forked_from_id"] = thread_id
+            lines.append(json.dumps(value, separators=(",", ":")))
+        new_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with sqlite3.connect(source.db_path) as conn:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(threads)")]
+            select = [
+                "?"
+                if column in {"id", "rollout_path", "model_provider"}
+                else column
+                for column in columns
+            ]
+            conn.execute(
+                f"INSERT INTO threads ({', '.join(columns)}) "
+                f"SELECT {', '.join(select)} FROM threads WHERE id = ?",
+                (new_id, str(new_path), target_provider, thread_id),
+            )
+        return ForkResult(new_id, str(new_path), target_provider)
 
 
 class MigrationEngineTest(unittest.TestCase):
@@ -70,8 +104,9 @@ class MigrationEngineTest(unittest.TestCase):
                            'workspace-write', 'on-request', 'gpt-test', 0)""",
                 ("session-1", str(self.rollout)),
             )
+        repository = CodexRepository(self.codex_home)
         self.engine = MigrationEngine(
-            CodexRepository(self.codex_home), AuditStore(self.root / "manager")
+            repository, AuditStore(self.root / "manager"), FakeForkAdapter(repository)
         )
 
     def tearDown(self) -> None:
@@ -123,6 +158,27 @@ class MigrationEngineTest(unittest.TestCase):
         plan = self.engine.preview(["session-1"], "source", "target")
         self.assertEqual(plan.trace_profiles[0].encrypted_content_items, 1)
         self.assertIn("encrypted-content-not-portable", {risk.code for risk in plan.risks})
+
+    def test_fork_preserves_source_and_can_be_undone(self) -> None:
+        fork = self.engine.fork("session-1", "target", "FORK")
+        self.assertEqual(fork["status"], "completed")
+        forked_id = fork["forked_session_ids"][0]
+        sessions = {session.id: session for session in self.engine.repository.scan_sessions()}
+        self.assertEqual(sessions["session-1"].provider, "source")
+        self.assertEqual(sessions[forked_id].provider, "target")
+
+        restore_plan = self.engine.preview_restore(fork["operation_id"])
+        self.assertTrue(restore_plan["executable"])
+        restored = self.engine.restore(fork["operation_id"], "RESTORE")
+        self.assertEqual(restored["status"], "completed")
+        self.assertNotIn(forked_id, {session.id for session in self.engine.repository.scan_sessions()})
+
+    def test_fork_undo_blocks_after_new_chat(self) -> None:
+        fork = self.engine.fork("session-1", "target", "FORK")
+        fork_path = Path(fork["created_files"][0]["source"])
+        with fork_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "event_msg", "payload": {"type": "new"}}) + "\n")
+        self.assertFalse(self.engine.preview_restore(fork["operation_id"])["executable"])
 
     def test_execute_requires_exact_acknowledgement(self) -> None:
         with self.assertRaisesRegex(MigrationError, "MIGRATE"):

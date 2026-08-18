@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-session-manager"
-version = "0.1.0"
-description = "Auditable, reversible Codex session provider migrations"
+version = "0.2.0"
+description = "Codex Relay: auditable session moves and provider forks"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -14,6 +14,8 @@ dependencies = []
 
 [project.scripts]
 codex-session-manager = "codex_session_manager.cli:main"
+codex-relay = "codex_session_manager.cli:main"
+csm = "codex_session_manager.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -27,4 +29,3 @@ codex_session_manager = ["static/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-

@@ -191,6 +191,20 @@ class CodexRepository:
                 )
             conn.commit()
 
+    def delete_fork(self, db_path: Path, session_id: str, rollout_path: Path) -> None:
+        validated = self._validated_rollout_path(str(rollout_path))
+        with self._connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT rollout_path FROM threads WHERE id = ?", (session_id,)
+            ).fetchone()
+            if row is None or Path(row[0]).resolve() != validated:
+                raise RepositoryError("Fork thread no longer points to the audited rollout")
+            changed = conn.execute("DELETE FROM threads WHERE id = ?", (session_id,)).rowcount
+            if changed != 1:
+                raise RepositoryError(f"Expected to delete one fork row, deleted {changed}")
+            conn.commit()
+        validated.unlink()
+
     def is_thread_locked(self, thread_id: str) -> bool:
         lock_path = self.home / "thread-writer-locks" / f"{thread_id}.lock"
         if not lock_path.exists():

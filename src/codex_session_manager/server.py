@@ -38,10 +38,16 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                     b"__CSRF_TOKEN__", self.server.csrf_token.encode("ascii")
                 )
                 self._bytes(content, "text/html; charset=utf-8")
+            elif path in ("/docs", "/docs/"):
+                self._bytes(self._static("docs.html"), "text/html; charset=utf-8")
             elif path == "/app.js":
                 self._bytes(self._static("app.js"), "text/javascript; charset=utf-8")
+            elif path == "/docs.js":
+                self._bytes(self._static("docs.js"), "text/javascript; charset=utf-8")
             elif path == "/styles.css":
                 self._bytes(self._static("styles.css"), "text/css; charset=utf-8")
+            elif path == "/docs.css":
+                self._bytes(self._static("docs.css"), "text/css; charset=utf-8")
             else:
                 self._error(HTTPStatus.NOT_FOUND, "Not found")
         except Exception as exc:
@@ -60,6 +66,16 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                     payload.get("source_provider", ""),
                     payload.get("target_provider", ""),
                 ).to_dict()
+            elif path == "/api/fork/preview":
+                result = self.server.engine.preview_fork(
+                    payload.get("session_id", ""), payload.get("target_provider", "")
+                ).to_dict()
+            elif path == "/api/fork":
+                result = self.server.engine.fork(
+                    payload.get("session_id", ""),
+                    payload.get("target_provider", ""),
+                    payload.get("acknowledgement", ""),
+                )
             elif path == "/api/migrate":
                 result = self.server.engine.execute(
                     payload.get("session_ids", []),

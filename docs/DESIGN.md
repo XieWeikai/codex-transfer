@@ -2,7 +2,7 @@
 
 ## Goal
 
-Move selected local Codex sessions from one `model_provider` bucket to another while making every write traceable and reversible. Credentials and provider configuration are explicitly out of scope.
+Fork or move selected local Codex sessions between `model_provider` buckets while making every write traceable and recoverable. Credentials and provider configuration are explicitly out of scope.
 
 ## Source findings
 
@@ -13,17 +13,23 @@ The implementation was checked against these source revisions on 2026-08-18:
 
 Codex reads provider metadata from the rollout `session_meta` record and persists a matching `model_provider` value in `state_5.sqlite.threads`. CC Switch's `codex_history_migration.rs` confirms that a provider bucket migration must update both representations and uses SQLite's backup interface before changing state. CC Switch also resolves `sqlite_home` and `CODEX_SQLITE_HOME`, which this project mirrors.
 
+Codex app-server exposes `thread/fork` with a `modelProvider` override. Forking therefore crosses the supported Codex interface instead of recreating its lineage and persistence rules. The local adapter starts app-server over stdio with the selected `CODEX_HOME`, initializes one connection, submits the fork request, validates the returned durable thread, and shuts the process down cleanly.
+
 ## Deep modules
 
 The design follows the `codebase-design` skill's depth, seam, and locality vocabulary.
 
 ### `MigrationEngine`
 
-This is the external seam. Its interface has three operations: `preview`, `execute`, and `restore`. Callers do not coordinate files, SQLite transactions, backup generations, hashes, locks, or rollback themselves. Tests exercise the same interface as the HTTP adapter.
+This is the external seam. Its interface covers migration preview/execute, Fork preview/execute, restore preview, and restore. Callers do not coordinate files, SQLite transactions, app-server lifecycle, backup generations, hashes, locks, or rollback themselves. Tests exercise the same interface as the HTTP adapter.
 
 ### `CodexRepository`
 
 This module owns the unstable Codex storage seam. It discovers state databases, validates rollout paths, detects writer locks, parses session metadata, performs atomic rollout replacement, and updates SQLite transactionally. Storage-version changes remain local to this module.
+
+### `CodexAppServer`
+
+This adapter owns the official Fork seam. Its small interface accepts a source thread ID and target Provider and returns the durable fork identity. Production uses the stdio app-server adapter; tests use an in-process adapter that produces the same observable repository state.
 
 ### `AuditStore`
 
@@ -36,7 +42,13 @@ created -> preparing -> backed_up -> completed
                                 \-> rolled_back
 ```
 
-A restore is a new operation. It first snapshots the current state, verifies that current hashes match the original migration's post-state, and then applies the original pre-state. This prevents restoration from silently deleting messages written after migration.
+A restore is a new operation. Migration restore verifies the complete post-state before applying the original pre-state. Fork restore verifies that the created rollout is unchanged, snapshots the Fork, and removes only that thread and rollout. Both paths prevent restoration from silently deleting new messages.
+
+## Trace portability analysis
+
+Preflight scans JSONL one record at a time and counts structurally present `encrypted_content` values without returning message contents to the browser. Malformed JSONL records block writes. The scan deliberately does not claim per-turn Provider attribution because current rollout history does not contain a reliable provenance field for every model-produced item.
+
+The resulting guarantee is intentionally narrow: backup bytes are recoverable while audited post-state hashes still match. Successful continuation, target-backend decryption, and reconstruction of mixed-provider provenance are not guaranteed.
 
 ## Consistency limits
 
