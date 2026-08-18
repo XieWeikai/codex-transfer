@@ -14,6 +14,9 @@ const state = {
   pointerDrag: null,
   mouseDrag: null,
   suppressCardClick: false,
+  popoverSessionId: null,
+  popoverPinned: false,
+  popoverHideTimer: null,
 };
 
 const providerColors = ["#86d39a", "#e7b85c", "#7bb7d7", "#c797d8", "#dc8d69", "#a8c66c"];
@@ -229,41 +232,50 @@ function visibleSessions() {
 }
 
 function renderSessions() {
+  hideSessionPopover();
   const sessions = visibleSessions();
   $("#visibleCount").textContent = sessions.length;
   $("#selectedCount").textContent = state.selected.size;
   $("#selectAll").checked = sessions.length > 0 && sessions.every(session => state.selected.has(session.id));
   $("#selectAll").indeterminate = sessions.some(session => state.selected.has(session.id)) && !$("#selectAll").checked;
 
-  $("#sessionList").innerHTML = sessions.length ? sessions.map((session, index) => {
+  $("#sessionList").innerHTML = sessions.length ? sessions.map(session => {
     const selected = state.selected.has(session.id);
-    const detailId = `session-detail-${index}`;
     const chips = [
       session.locked ? '<span class="status-chip locked">使用中</span>' : "",
       session.archived ? '<span class="status-chip archived">已归档</span>' : "",
     ].join("");
     const status = session.locked ? "使用中" : session.archived ? "已归档" : "可操作";
-    return `<article class="session-card ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.title)}, Project ${escapeHtml(projectLabel(session.cwd))}" aria-describedby="${detailId}">
+    return `<article class="session-card ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.title)}, Project ${escapeHtml(projectLabel(session.cwd))}">
       <div class="session-card-top">
         <label class="session-check" aria-label="选择 ${escapeHtml(session.title)}"><input type="checkbox" ${selected ? "checked" : ""} ${session.locked ? "disabled" : ""}></label>
-        <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.title)} 的完整信息" aria-expanded="false" title="完整信息">i</button></div>
+        <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.title)} 的完整信息" aria-controls="sessionPopover" aria-expanded="false" title="查看完整信息">i</button></div>
       </div>
       <strong class="session-card-title">${escapeHtml(session.title || "未命名 Session")}</strong>
       <div class="session-project" title="${escapeHtml(session.cwd || "无 Project")}"><span aria-hidden="true">⌂</span>${escapeHtml(projectLabel(session.cwd))}</div>
       <div class="session-card-foot"><span>${escapeHtml(session.model || "model unknown")}</span><time>${formatDate(session.updated_at)}</time></div>
-      <div class="session-detail-popover" id="${detailId}" role="tooltip">
-        <strong>${escapeHtml(session.title || "未命名 Session")}</strong>
-        <dl><div><dt>Session ID</dt><dd>${escapeHtml(session.id)}</dd></div><div><dt>Provider</dt><dd>${escapeHtml(session.provider)}</dd></div><div><dt>Model</dt><dd>${escapeHtml(session.model || "unknown")}</dd></div><div><dt>Project</dt><dd>${escapeHtml(session.cwd || "无工作目录")}</dd></div><div><dt>Updated</dt><dd>${formatDate(session.updated_at)}</dd></div><div><dt>Size / Status</dt><dd>${formatBytes(session.size_bytes)} · ${status}</dd></div></dl>
-      </div>
     </article>`;
   }).join("") : '<div class="empty-state"><div><strong>没有匹配的 Session</strong><p>调整 provider、Project、状态筛选或搜索关键词。</p></div></div>';
 
   $$(".session-card").forEach(card => {
     const id = card.dataset.id;
+    const session = state.sessions.find(item => item.id === id);
     card.querySelector("input")?.addEventListener("change", event => setSessionSelected(id, event.target.checked));
     card.querySelector(".info-button")?.addEventListener("click", event => {
-      const open = card.classList.toggle("details-open");
-      event.currentTarget.setAttribute("aria-expanded", String(open));
+      const shouldClose = state.popoverPinned && state.popoverSessionId === id;
+      shouldClose ? hideSessionPopover() : showSessionPopover(card, session, true);
+    });
+    card.addEventListener("pointerenter", event => {
+      if (event.pointerType === "mouse" && !state.popoverPinned) showSessionPopover(card, session, false);
+    });
+    card.addEventListener("pointerleave", event => {
+      if (event.pointerType === "mouse" && !state.popoverPinned) scheduleSessionPopoverHide();
+    });
+    card.addEventListener("focus", () => {
+      if (!state.popoverPinned) showSessionPopover(card, session, false);
+    });
+    card.addEventListener("blur", () => {
+      if (!state.popoverPinned) scheduleSessionPopoverHide();
     });
     card.addEventListener("keydown", event => {
       if ((event.key === " " || event.key === "Enter") && event.target === card) {
@@ -272,7 +284,7 @@ function renderSessions() {
       }
     });
     card.addEventListener("click", event => {
-      if (event.target.closest("button, input, label, .session-detail-popover")) return;
+      if (event.target.closest("button, input, label")) return;
       if (state.suppressCardClick) {
         state.suppressCardClick = false;
         return;
@@ -281,6 +293,81 @@ function renderSessions() {
     });
     setupPointerDrag(card, id);
   });
+}
+
+function showSessionPopover(card, session, pinned) {
+  if (!card || !session) return;
+  clearTimeout(state.popoverHideTimer);
+  state.popoverSessionId = session.id;
+  state.popoverPinned = pinned;
+  const status = session.locked ? "使用中" : session.archived ? "已归档" : "可操作";
+  $("#sessionPopoverContent").innerHTML = `
+    <dl class="popover-details">
+      <div><dt>Session ID</dt><dd>${escapeHtml(session.id)}</dd></div>
+      <div><dt>Provider</dt><dd>${escapeHtml(session.provider)}</dd></div>
+      <div><dt>Model</dt><dd>${escapeHtml(session.model || "unknown")}</dd></div>
+      <div><dt>Project</dt><dd>${escapeHtml(session.cwd || "无工作目录")}</dd></div>
+      <div><dt>Updated</dt><dd>${formatDate(session.updated_at)}</dd></div>
+      <div><dt>Size / Status</dt><dd>${formatBytes(session.size_bytes)} · ${status}</dd></div>
+    </dl>
+    <section class="popover-title"><span>完整标题</span><p>${escapeHtml(session.title || "未命名 Session")}</p></section>`;
+  $$(".info-button").forEach(button => button.setAttribute("aria-expanded", "false"));
+  if (pinned) card.querySelector(".info-button")?.setAttribute("aria-expanded", "true");
+  const popover = $("#sessionPopover");
+  popover.classList.toggle("pinned", pinned);
+  popover.classList.add("open");
+  popover.setAttribute("aria-hidden", "false");
+  positionSessionPopover(card);
+}
+
+function positionSessionPopover(card) {
+  const popover = $("#sessionPopover");
+  const cardRect = card.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const gap = 12;
+  const margin = 12;
+  let left;
+  let top;
+  if (window.innerWidth <= 640) {
+    left = Math.max(margin, Math.min(cardRect.left, window.innerWidth - popoverRect.width - margin));
+    const below = cardRect.bottom + gap;
+    top = below + popoverRect.height <= window.innerHeight - margin
+      ? below
+      : Math.max(margin, cardRect.top - popoverRect.height - gap);
+  } else {
+    const right = cardRect.right + gap;
+    left = right + popoverRect.width <= window.innerWidth - margin
+      ? right
+      : Math.max(margin, cardRect.left - popoverRect.width - gap);
+    top = Math.max(margin, Math.min(cardRect.top, window.innerHeight - popoverRect.height - margin));
+  }
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
+function scheduleSessionPopoverHide() {
+  clearTimeout(state.popoverHideTimer);
+  state.popoverHideTimer = setTimeout(() => {
+    if (!state.popoverPinned) hideSessionPopover();
+  }, 120);
+}
+
+function hideSessionPopover() {
+  clearTimeout(state.popoverHideTimer);
+  const returnFocus = Boolean(document.activeElement?.closest("#sessionPopover"));
+  const sessionId = state.popoverSessionId;
+  state.popoverSessionId = null;
+  state.popoverPinned = false;
+  const popover = $("#sessionPopover");
+  if (!popover) return;
+  popover.classList.remove("open", "pinned");
+  popover.setAttribute("aria-hidden", "true");
+  $$(".info-button").forEach(button => button.setAttribute("aria-expanded", "false"));
+  if (returnFocus && sessionId) {
+    requestAnimationFrame(() => {
+      $$(".session-card").find(card => card.dataset.id === sessionId)?.querySelector(".info-button")?.focus();
+    });
+  }
 }
 
 function setupPointerDrag(row, id) {
@@ -627,6 +714,14 @@ async function restore() {
 function setupEvents() {
   document.addEventListener("mousemove", moveMouseDrag);
   document.addEventListener("mouseup", finishMouseDrag);
+  $("#sessionPopover").addEventListener("pointerenter", () => clearTimeout(state.popoverHideTimer));
+  $("#sessionPopover").addEventListener("pointerleave", () => { if (!state.popoverPinned) scheduleSessionPopoverHide(); });
+  $("#closeSessionPopover").addEventListener("click", hideSessionPopover);
+  $(".session-table").addEventListener("scroll", hideSessionPopover, {passive: true});
+  window.addEventListener("resize", hideSessionPopover);
+  document.addEventListener("pointerdown", event => {
+    if (state.popoverPinned && !event.target.closest("#sessionPopover, .info-button")) hideSessionPopover();
+  });
   $("#refreshButton").addEventListener("click", load);
   $("#themeSelect").addEventListener("change", event => applyTheme(event.target.value));
   $("#search").addEventListener("input", debounce(renderSessions, 120));
@@ -674,6 +769,7 @@ function setupEvents() {
   $("#restoreConfirm").addEventListener("click", restore);
   document.addEventListener("keydown", event => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#search").focus(); }
+    if (event.key === "Escape" && $("#sessionPopover").classList.contains("open")) hideSessionPopover();
     if (event.key === "Escape" && $("#historyDrawer").classList.contains("open")) closeHistory();
   });
 }

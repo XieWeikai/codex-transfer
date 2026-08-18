@@ -24,6 +24,7 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn("支持多选".encode(), script)
         self.assertIn(b'id="projectFilter"', html)
         self.assertIn(b"session-card", script)
+        self.assertIn(b'id="sessionPopover"', html)
         self.assertIn(b"/api/forks/preview", script)
         self.assertIn(b"sessions.map", script)
         self.assertIn(b"prefers-reduced-motion", SessionManagerHandler._static("styles.css"))
