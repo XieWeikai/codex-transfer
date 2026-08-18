@@ -37,6 +37,10 @@ This adapter owns the official Fork seam. Its small interface accepts a source t
 
 This module owns backup generations and the audit seam. Each operation directory contains a manifest, complete pre-write file copies, consistent SQLite snapshots, and SHA-256 values. The append-only audit JSONL uses a previous-event hash so accidental or unsophisticated edits are detectable.
 
+### CLI and HTTP adapters
+
+`cli.py` and `server.py` are adapters at the same `MigrationEngine` seam. They may select, format, and serialize data, but they do not implement storage mutations. Consequently, CLI and Web writes share preflight, locking, backup, confirmation, rollback, verification, audit, and divergence behavior. The CLI's `--json` form is the stable interface used by the bundled Codex and Claude Code Agent Skills.
+
 ## Operation state machine
 
 ```text

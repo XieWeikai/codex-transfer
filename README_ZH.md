@@ -65,7 +65,7 @@ cd codex-session-manager
 codex-relay
 ```
 
-安装器会在 `~/.local/share/codex-relay` 下创建隔离环境，并在 `~/.local/bin` 中提供 `codex-relay` 和 `csm`。遇到同名普通文件时会拒绝覆盖。
+安装器会在 `~/.local/share/codex-relay` 下创建隔离环境，并在 `~/.local/bin` 中提供 `codex-relay` 和 `csm`。它还会把 Codex Agent Skill 安装到 `~/.agents/skills`，把 Claude Code Skill 安装到 `~/.claude/skills`。遇到同名普通文件或 Skill 目录时绝不会覆盖。
 
 启动后打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。
 
@@ -86,6 +86,44 @@ codex-relay \
   --codex-bin /path/to/codex \
   --port 8765
 ```
+
+## CLI
+
+不带子命令运行 `codex-relay` 或 `csm` 时仍会启动 Web UI。CLI 为终端和 Agent 提供与 Web UI 相同的 engine 操作：
+
+| 命令 | 用途 |
+|---|---|
+| `serve` | 显式启动本地 Web 工作台。 |
+| `status` | 检查 Codex 存储、数据库完整性、Provider、锁和审计链状态。 |
+| `sessions` | 按 Provider、Project、状态、搜索内容和排序方式筛选 Session。 |
+| `operations` | 列出备份与审计操作。 |
+| `fork-preview` / `fork` | 预检后创建保留来源 Session 的 Provider Fork。 |
+| `move-preview` / `move` | 预检后在 Provider 分桶之间移动原 Session。 |
+| `restore-preview` / `restore` | 检查状态分叉后恢复或撤销未变化的操作。 |
+
+使用 `--json` 获取机器可读输出；重复 `--session` 可以多选：
+
+```bash
+csm sessions --provider openai --project /path/to/project --status ready --json
+
+csm fork-preview --session SESSION_ID --target TARGET_PROVIDER --json
+csm fork --session SESSION_ID --target TARGET_PROVIDER --acknowledge FORK --json
+
+csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
+csm move --session SESSION_ID --source SOURCE --target TARGET \
+  --acknowledge MIGRATE --json
+
+csm restore-preview --operation OPERATION_ID --json
+csm restore --operation OPERATION_ID --acknowledge RESTORE --json
+```
+
+预检命令不会写入 Session 状态。写命令会重新执行预检，创建与 Web UI 完全相同的备份和审计记录，并要求相同的明确确认词。
+
+### Agent Skills
+
+仓库同时提供 [Codex Skill](.agents/skills/codex-relay/SKILL.md) 和 [Claude Code Skill](.claude/skills/codex-relay/SKILL.md)。它们要求 Agent 先用只读 JSON 命令发现 ID，每次写入前进行预检，遇到 critical 风险立即停止，并在操作后验证结果。
+
+Agent 在本仓库工作时会自动加载项目级 Skill；`./install.sh` 还会将其安装到用户级目录。可以使用 `CODEX_RELAY_CODEX_SKILLS_DIR` 或 `CODEX_RELAY_CLAUDE_SKILLS_DIR` 修改目标位置。
 
 ## 推荐操作流程
 

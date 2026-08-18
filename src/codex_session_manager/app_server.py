@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from . import __version__
+
 
 class AppServerError(RuntimeError):
     pass
@@ -61,7 +63,7 @@ class CodexAppServer:
                         "clientInfo": {
                             "name": "codex_session_manager",
                             "title": "Codex Relay",
-                            "version": "0.2.0",
+                            "version": __version__,
                         },
                         "capabilities": {
                             "experimentalApi": True,

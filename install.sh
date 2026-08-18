@@ -4,6 +4,8 @@ set -eu
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 install_root=${CODEX_RELAY_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/codex-relay}
 bin_dir=${CODEX_RELAY_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}
+codex_skills_dir=${CODEX_RELAY_CODEX_SKILLS_DIR:-$HOME/.agents/skills}
+claude_skills_dir=${CODEX_RELAY_CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}
 
 if [ -n "${PYTHON_BIN:-}" ]; then
   python_bin=$PYTHON_BIN
@@ -27,6 +29,9 @@ mkdir -p "$install_root" "$bin_dir"
 release_dir="$install_root/releases/$(date +%Y%m%d%H%M%S)"
 mkdir -p "$release_dir"
 cp -R "$project_dir/src/codex_session_manager" "$release_dir/"
+mkdir -p "$release_dir/skills/codex" "$release_dir/skills/claude"
+cp -R "$project_dir/.agents/skills/codex-relay" "$release_dir/skills/codex/"
+cp -R "$project_dir/.claude/skills/codex-relay" "$release_dir/skills/claude/"
 ln -sfn "$release_dir" "$install_root/current"
 
 launcher="$install_root/codex-relay"
@@ -47,6 +52,23 @@ for command_name in codex-relay csm; do
   fi
   ln -sfn "$launcher" "$destination"
 done
+
+install_skill() {
+  source_dir=$1
+  skills_dir=$2
+  product=$3
+  destination="$skills_dir/codex-relay"
+  mkdir -p "$skills_dir"
+  if [ -e "$destination" ] && [ ! -L "$destination" ]; then
+    echo "Skipping $product skill; refusing to replace existing path: $destination" >&2
+    return
+  fi
+  ln -sfn "$source_dir" "$destination"
+  echo "$product skill: $destination"
+}
+
+install_skill "$install_root/current/skills/codex/codex-relay" "$codex_skills_dir" "Codex"
+install_skill "$install_root/current/skills/claude/codex-relay" "$claude_skills_dir" "Claude Code"
 
 echo "Codex Relay installed."
 echo "Run: codex-relay"

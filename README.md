@@ -65,7 +65,7 @@ cd codex-session-manager
 codex-relay
 ```
 
-The installer creates an isolated environment under `~/.local/share/codex-relay` and exposes `codex-relay` and `csm` under `~/.local/bin`. It refuses to overwrite an existing regular file.
+The installer creates an isolated environment under `~/.local/share/codex-relay` and exposes `codex-relay` and `csm` under `~/.local/bin`. It also installs the bundled Agent Skill for Codex under `~/.agents/skills` and Claude Code under `~/.claude/skills`. Existing regular files or skill directories are never overwritten.
 
 Open [http://127.0.0.1:8765](http://127.0.0.1:8765) after startup.
 
@@ -86,6 +86,44 @@ codex-relay \
   --codex-bin /path/to/codex \
   --port 8765
 ```
+
+## CLI
+
+Running `codex-relay` or `csm` without a subcommand still starts the Web UI. The CLI exposes the same engine operations for terminals and agents:
+
+| Command | Purpose |
+|---|---|
+| `serve` | Start the local Web workbench explicitly. |
+| `status` | Check Codex storage, database integrity, providers, locks, and audit-chain health. |
+| `sessions` | Filter sessions by Provider, Project, status, search text, and sort order. |
+| `operations` | List backup and audit operations. |
+| `fork-preview` / `fork` | Preflight, then create provider forks with source preservation. |
+| `move-preview` / `move` | Preflight, then move original sessions between Provider buckets. |
+| `restore-preview` / `restore` | Check divergence, then restore or undo an unchanged operation. |
+
+Use `--json` for machine-readable output. Repeat `--session` for multi-selection:
+
+```bash
+csm sessions --provider openai --project /path/to/project --status ready --json
+
+csm fork-preview --session SESSION_ID --target TARGET_PROVIDER --json
+csm fork --session SESSION_ID --target TARGET_PROVIDER --acknowledge FORK --json
+
+csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
+csm move --session SESSION_ID --source SOURCE --target TARGET \
+  --acknowledge MIGRATE --json
+
+csm restore-preview --operation OPERATION_ID --json
+csm restore --operation OPERATION_ID --acknowledge RESTORE --json
+```
+
+Preview commands never write session state. Write commands rerun preflight, create the same backups and audit records as the Web UI, and require the same explicit confirmation words.
+
+### Agent Skills
+
+The repository includes a [Codex Skill](.agents/skills/codex-relay/SKILL.md) and a [Claude Code Skill](.claude/skills/codex-relay/SKILL.md). They instruct agents to discover IDs using read-only JSON commands, preview every write, stop on critical risks, and verify the resulting operation.
+
+Repository-local skills load automatically while an agent works in this checkout. `./install.sh` also makes them available globally. Override the destinations with `CODEX_RELAY_CODEX_SKILLS_DIR` or `CODEX_RELAY_CLAUDE_SKILLS_DIR`.
 
 ## Recommended workflow
 
