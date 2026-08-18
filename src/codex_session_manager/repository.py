@@ -38,12 +38,12 @@ class CodexRepository:
         except (OSError, tomllib.TOMLDecodeError) as exc:
             raise RepositoryError(f"Cannot parse {path}: {exc}") from exc
 
-    def provider_ids(self) -> list[str]:
+    def provider_ids(self, sessions: Iterable[Session] | None = None) -> list[str]:
         configured = self.config().get("model_providers", {})
         ids = {"openai"}
         if isinstance(configured, dict):
             ids.update(str(key) for key in configured)
-        for session in self.scan_sessions():
+        for session in sessions if sessions is not None else self.scan_sessions():
             ids.add(session.provider)
         return sorted(ids, key=str.casefold)
 
@@ -102,6 +102,16 @@ class CodexRepository:
         if missing:
             raise RepositoryError(f"Unknown session IDs: {', '.join(missing)}")
         return [indexed[session_id] for session_id in wanted]
+
+    def session_title(self, session_id: str) -> str:
+        for db_path in self.state_db_paths():
+            with self._connect(db_path, readonly=True) as conn:
+                if not self._has_threads_schema(conn):
+                    continue
+                row = conn.execute("SELECT title FROM threads WHERE id = ?", (session_id,)).fetchone()
+                if row is not None:
+                    return row["title"] or "Untitled session"
+        raise RepositoryError(f"Unknown session ID: {session_id}")
 
     def integrity_check(self, db_path: Path) -> str:
         with self._connect(db_path, readonly=True) as conn:

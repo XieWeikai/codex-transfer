@@ -17,6 +17,7 @@ const state = {
   popoverSessionId: null,
   popoverPinned: false,
   popoverHideTimer: null,
+  popoverLoadTimer: null,
 };
 
 const providerColors = ["#86d39a", "#e7b85c", "#7bb7d7", "#c797d8", "#dc8d69", "#a8c66c"];
@@ -76,6 +77,21 @@ function formatDate(value) {
   });
 }
 
+function compactText(value, limit = 120) {
+  const normalized = String(value || "未命名 Session").replace(/\s+/g, " ").trim();
+  return normalized.length > limit ? `${normalized.slice(0, limit - 1)}…` : normalized;
+}
+
+function prepareSession(session) {
+  const displayTitle = compactText(session.title);
+  return {
+    ...session,
+    displayTitle,
+    fullTitle: session.title_truncated ? null : session.title,
+    searchText: `${session.title} ${session.cwd} ${session.id} ${session.model || ""}`.toLocaleLowerCase(),
+  };
+}
+
 function selectedSessions() {
   return state.sessions.filter(session => state.selected.has(session.id));
 }
@@ -91,12 +107,11 @@ function providerColor(provider) {
 
 async function load() {
   try {
-    const [status, sessionData, operationData] = await Promise.all([
-      api("/api/status"), api("/api/sessions"), api("/api/operations"),
-    ]);
-    state.sessions = sessionData.sessions;
+    const workspace = await api("/api/workspace");
+    const status = workspace.status;
+    state.sessions = workspace.sessions.map(prepareSession);
     state.providers = status.providers;
-    state.operations = operationData.operations;
+    state.operations = workspace.operations;
     if (!state.activeProvider || !state.sessions.some(session => session.provider === state.activeProvider)) {
       state.activeProvider = observedProviders()[0] || null;
     }
@@ -219,12 +234,12 @@ function visibleSessions() {
     if (state.filter === "ready" && (session.locked || session.archived)) return false;
     if (state.filter === "locked" && !session.locked) return false;
     if (state.filter === "archived" && !session.archived) return false;
-    return !query || `${session.title} ${session.cwd} ${session.id} ${session.model || ""}`.toLocaleLowerCase().includes(query);
+    return !query || session.searchText.includes(query);
   });
   const sort = $("#sortSessions").value;
   sessions.sort((a, b) => {
     if (sort === "oldest") return a.updated_at - b.updated_at;
-    if (sort === "title") return a.title.localeCompare(b.title, "zh-CN");
+    if (sort === "title") return a.displayTitle.localeCompare(b.displayTitle, "zh-CN");
     if (sort === "size") return b.size_bytes - a.size_bytes;
     return b.updated_at - a.updated_at;
   });
@@ -234,10 +249,12 @@ function visibleSessions() {
 function renderSessions() {
   hideSessionPopover();
   const sessions = visibleSessions();
+  const selectableSessions = sessions.filter(session => !session.locked);
+  const selectedVisible = selectableSessions.filter(session => state.selected.has(session.id)).length;
   $("#visibleCount").textContent = sessions.length;
   $("#selectedCount").textContent = state.selected.size;
-  $("#selectAll").checked = sessions.length > 0 && sessions.every(session => state.selected.has(session.id));
-  $("#selectAll").indeterminate = sessions.some(session => state.selected.has(session.id)) && !$("#selectAll").checked;
+  $("#selectAll").checked = selectableSessions.length > 0 && selectedVisible === selectableSessions.length;
+  $("#selectAll").indeterminate = selectedVisible > 0 && selectedVisible < selectableSessions.length;
 
   $("#sessionList").innerHTML = sessions.length ? sessions.map(session => {
     const selected = state.selected.has(session.id);
@@ -245,13 +262,12 @@ function renderSessions() {
       session.locked ? '<span class="status-chip locked">使用中</span>' : "",
       session.archived ? '<span class="status-chip archived">已归档</span>' : "",
     ].join("");
-    const status = session.locked ? "使用中" : session.archived ? "已归档" : "可操作";
-    return `<article class="session-card ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.title)}, Project ${escapeHtml(projectLabel(session.cwd))}">
+    return `<article class="session-card ${selected ? "selected" : ""} ${session.locked ? "locked" : ""}" data-draggable="${!session.locked}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.displayTitle)}, Project ${escapeHtml(projectLabel(session.cwd))}">
       <div class="session-card-top">
-        <label class="session-check" aria-label="选择 ${escapeHtml(session.title)}"><input type="checkbox" ${selected ? "checked" : ""} ${session.locked ? "disabled" : ""}></label>
-        <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.title)} 的完整信息" aria-controls="sessionPopover" aria-expanded="false" title="查看完整信息">i</button></div>
+        <label class="session-check" aria-label="选择 ${escapeHtml(session.displayTitle)}"><input type="checkbox" ${selected ? "checked" : ""} ${session.locked ? "disabled" : ""}></label>
+        <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.displayTitle)} 的完整信息" aria-controls="sessionPopover" aria-expanded="false" title="查看完整信息">i</button></div>
       </div>
-      <strong class="session-card-title">${escapeHtml(session.title || "未命名 Session")}</strong>
+      <strong class="session-card-title">${escapeHtml(session.displayTitle)}</strong>
       <div class="session-project" title="${escapeHtml(session.cwd || "无 Project")}"><span aria-hidden="true">⌂</span>${escapeHtml(projectLabel(session.cwd))}</div>
       <div class="session-card-foot"><span>${escapeHtml(session.model || "model unknown")}</span><time>${formatDate(session.updated_at)}</time></div>
     </article>`;
@@ -298,6 +314,7 @@ function renderSessions() {
 function showSessionPopover(card, session, pinned) {
   if (!card || !session) return;
   clearTimeout(state.popoverHideTimer);
+  clearTimeout(state.popoverLoadTimer);
   state.popoverSessionId = session.id;
   state.popoverPinned = pinned;
   const status = session.locked ? "使用中" : session.archived ? "已归档" : "可操作";
@@ -310,7 +327,7 @@ function showSessionPopover(card, session, pinned) {
       <div><dt>Updated</dt><dd>${formatDate(session.updated_at)}</dd></div>
       <div><dt>Size / Status</dt><dd>${formatBytes(session.size_bytes)} · ${status}</dd></div>
     </dl>
-    <section class="popover-title"><span>完整标题</span><p>${escapeHtml(session.title || "未命名 Session")}</p></section>`;
+    <section class="popover-title"><span>完整标题</span><p id="sessionPopoverTitle">${escapeHtml(session.fullTitle || session.title || "未命名 Session")}${session.title_truncated && !session.fullTitle ? "…" : ""}</p></section>`;
   $$(".info-button").forEach(button => button.setAttribute("aria-expanded", "false"));
   if (pinned) card.querySelector(".info-button")?.setAttribute("aria-expanded", "true");
   const popover = $("#sessionPopover");
@@ -318,6 +335,32 @@ function showSessionPopover(card, session, pinned) {
   popover.classList.add("open");
   popover.setAttribute("aria-hidden", "false");
   positionSessionPopover(card);
+  if (session.title_truncated && !session.fullTitle) {
+    state.popoverLoadTimer = setTimeout(
+      () => loadFullSessionTitle(session),
+      pinned ? 0 : 250,
+    );
+  }
+}
+
+async function loadFullSessionTitle(session) {
+  session.titlePromise ||= api(`/api/sessions/${encodeURIComponent(session.id)}`);
+  try {
+    const detail = await session.titlePromise;
+    session.fullTitle = detail.title;
+    session.title_truncated = false;
+    if (state.popoverSessionId !== session.id) return;
+    const title = $("#sessionPopoverTitle");
+    if (title) title.textContent = detail.title || "未命名 Session";
+    const card = $$(".session-card").find(item => item.dataset.id === session.id);
+    if (card) positionSessionPopover(card);
+  } catch (error) {
+    session.titlePromise = null;
+    if (state.popoverSessionId === session.id) {
+      const title = $("#sessionPopoverTitle");
+      if (title) title.textContent = `完整标题加载失败：${error.message}`;
+    }
+  }
 }
 
 function positionSessionPopover(card) {
@@ -354,6 +397,7 @@ function scheduleSessionPopoverHide() {
 
 function hideSessionPopover() {
   clearTimeout(state.popoverHideTimer);
+  clearTimeout(state.popoverLoadTimer);
   const returnFocus = Boolean(document.activeElement?.closest("#sessionPopover"));
   const sessionId = state.popoverSessionId;
   state.popoverSessionId = null;
@@ -469,7 +513,7 @@ function activateDragVisuals(drag) {
   const session = state.sessions.find(item => item.id === drag.id);
   drag.ghost = document.createElement("div");
   drag.ghost.className = "drag-ghost";
-  drag.ghost.textContent = session?.title || drag.id;
+  drag.ghost.textContent = session?.displayTitle || drag.id;
   document.body.append(drag.ghost);
 }
 
@@ -496,17 +540,32 @@ function setSessionSelected(id, selected) {
     toast(`一次迁移只能包含同一来源 provider。当前来源是 ${source}。`, true);
     return;
   }
+  if (state.selected.has(id) === selected) return;
   selected ? state.selected.add(id) : state.selected.delete(id);
   state.plan = null;
   renderTargets();
-  renderSessions();
+  updateSessionCardSelection(id);
+  updateSelectionIndicators();
   renderQueue();
-  if (selected && window.matchMedia("(max-width: 1024px)").matches) {
-    requestAnimationFrame(() => $(".transfer-panel").scrollIntoView({
-      behavior: "auto",
-      block: "start",
-    }));
-  }
+}
+
+function updateSessionCardSelection(id) {
+  const card = $$(".session-card").find(item => item.dataset.id === id);
+  if (!card) return;
+  const selected = state.selected.has(id);
+  card.classList.toggle("selected", selected);
+  const checkbox = card.querySelector('input[type="checkbox"]');
+  if (checkbox) checkbox.checked = selected;
+}
+
+function updateSelectionIndicators() {
+  const cards = $$(".session-card");
+  const selectable = cards.filter(card => card.dataset.draggable === "true");
+  const selectedCount = selectable.filter(card => state.selected.has(card.dataset.id)).length;
+  $("#visibleCount").textContent = cards.length;
+  $("#selectedCount").textContent = state.selected.size;
+  $("#selectAll").checked = selectable.length > 0 && selectedCount === selectable.length;
+  $("#selectAll").indeterminate = selectedCount > 0 && selectedCount < selectable.length;
 }
 
 function renderQueue() {
@@ -519,7 +578,7 @@ function renderQueue() {
     : sessions.length ? `至少 ${formatBytes(sessions.reduce((sum, session) => sum + session.size_bytes, 0))}` : "—";
   $("#previewButton").disabled = sessions.length === 0 || !$("#targetProvider").value;
   $("#transferQueue").innerHTML = sessions.length ? sessions.map(session => `
-    <div class="queue-item"><span></span><div><strong>${escapeHtml(session.title)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.title)}">×</button></div>
+    <div class="queue-item"><span></span><div><strong>${escapeHtml(session.displayTitle)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.displayTitle)}">×</button></div>
   `).join("") : '<div class="queue-empty">队列为空<br>拖入或点击卡片开始</div>';
   $$(".queue-remove").forEach(button => button.addEventListener("click", () => setSessionSelected(button.dataset.id, false)));
 }
@@ -616,7 +675,7 @@ async function migrate() {
           $("#migrationDialog").close();
           state.plan = null;
           await load();
-          toast(`批量 Fork 已完成 ${completed.length}/${sessions.length}；失败于 ${sessions[index].title}：${error.message}`, true);
+          toast(`批量 Fork 已完成 ${completed.length}/${sessions.length}；失败于 ${sessions[index].displayTitle}：${error.message}`, true);
           return;
         }
       }
@@ -728,21 +787,33 @@ function setupEvents() {
   $("#projectFilter").addEventListener("change", event => { event.target.title = event.target.value === "__all__" ? "全部 Project" : event.target.value || "无 Project"; renderSessions(); });
   $("#sortSessions").addEventListener("change", renderSessions);
   $("#targetProvider").addEventListener("change", () => { state.plan = null; renderQueue(); });
-  $("#clearSelection").addEventListener("click", () => { state.selected.clear(); state.plan = null; renderAll(); });
+  $("#clearSelection").addEventListener("click", () => {
+    const selectedIds = [...state.selected];
+    state.selected.clear();
+    state.plan = null;
+    selectedIds.forEach(updateSessionCardSelection);
+    renderTargets();
+    updateSelectionIndicators();
+    renderQueue();
+  });
   $$(".action-mode").forEach(button => button.addEventListener("click", () => {
     state.action = button.dataset.action;
     state.plan = null;
-    renderAll();
+    renderActionMode();
+    renderTargets();
+    renderQueue();
   }));
   $("#selectAll").addEventListener("change", event => {
     const source = selectedSource();
-    visibleSessions().forEach(session => {
+    const sessions = visibleSessions();
+    sessions.forEach(session => {
       if (!session.locked && (!source || source === session.provider)) {
         event.target.checked ? state.selected.add(session.id) : state.selected.delete(session.id);
       }
     });
     state.plan = null;
-    renderTargets(); renderSessions(); renderQueue();
+    sessions.forEach(session => updateSessionCardSelection(session.id));
+    renderTargets(); updateSelectionIndicators(); renderQueue();
   });
   $$(".segment").forEach(button => button.addEventListener("click", () => {
     state.filter = button.dataset.filter;

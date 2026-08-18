@@ -2,12 +2,35 @@ from __future__ import annotations
 
 import unittest
 
+from codex_session_manager.model import Session
 from codex_session_manager.server import SessionManagerHandler
 
 
 class StaticAssetsTest(unittest.TestCase):
+    def test_session_summary_bounds_large_titles(self) -> None:
+        session = Session(
+            id="session-1",
+            title="x" * 1000,
+            provider="source",
+            model="model",
+            cwd="/tmp/project",
+            updated_at=1,
+            rollout_path="/tmp/rollout.jsonl",
+            db_path="/tmp/state.sqlite",
+            archived=False,
+            locked=False,
+            rollout_provider="source",
+            size_bytes=10,
+        )
+        summary = session.to_summary_dict()
+        self.assertEqual(len(summary["title"]), 240)
+        self.assertTrue(summary["title_truncated"])
+        self.assertNotIn("rollout_path", summary)
+        self.assertNotIn("db_path", summary)
+
     def test_assets_are_packaged(self) -> None:
         self.assertIn(b"Codex Relay", SessionManagerHandler._static("index.html"))
+        self.assertIn(b"/api/workspace", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/preview", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/fork", SessionManagerHandler._static("app.js"))
         self.assertIn(b"thread/fork", SessionManagerHandler._static("docs.html"))

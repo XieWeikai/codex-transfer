@@ -10,7 +10,7 @@ from typing import Any
 
 from .app_server import ForkAdapter, ForkResult
 from .audit import AuditStore, sha256_database, sha256_file
-from .model import MigrationPlan, Risk, require_safe_identifier
+from .model import MigrationPlan, Risk, Session, require_safe_identifier
 from .repository import CodexRepository, RepositoryError
 
 try:
@@ -37,7 +37,7 @@ class MigrationEngine:
         self.fork_adapter = fork_adapter
         self.lock_path = audit.root / "manager.lock"
 
-    def status(self) -> dict[str, Any]:
+    def status(self, sessions: list[Session] | None = None) -> dict[str, Any]:
         databases = []
         for path in self.repository.state_db_paths():
             databases.append(
@@ -47,15 +47,23 @@ class MigrationEngine:
                     "size_bytes": path.stat().st_size,
                 }
             )
-        sessions = self.repository.scan_sessions()
+        sessions = self.repository.scan_sessions() if sessions is None else sessions
         return {
             "codex_home": str(self.repository.home),
             "data_dir": str(self.audit.root),
             "databases": databases,
             "session_count": len(sessions),
             "locked_session_count": sum(session.locked for session in sessions),
-            "providers": self.repository.provider_ids(),
+            "providers": self.repository.provider_ids(sessions),
             "audit_chain_valid": self.audit.verify_chain(),
+        }
+
+    def workspace_snapshot(self) -> dict[str, Any]:
+        sessions = self.repository.scan_sessions()
+        return {
+            "status": self.status(sessions),
+            "sessions": [session.to_summary_dict() for session in sessions],
+            "operations": self.audit.list_operations(),
         }
 
     def preview(

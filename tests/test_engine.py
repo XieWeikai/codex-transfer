@@ -112,6 +112,16 @@ class MigrationEngineTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_workspace_snapshot_uses_bounded_session_summaries(self) -> None:
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE threads SET title = ? WHERE id = 'session-1'", ("x" * 1000,))
+        snapshot = self.engine.workspace_snapshot()
+        summary = snapshot["sessions"][0]
+        self.assertEqual(len(summary["title"]), 240)
+        self.assertTrue(summary["title_truncated"])
+        self.assertNotIn("rollout_path", summary)
+        self.assertEqual(self.engine.repository.session_title("session-1"), "x" * 1000)
+
     def test_preview_execute_and_restore_round_trip(self) -> None:
         plan = self.engine.preview(["session-1"], "source", "target")
         self.assertTrue(plan.executable)

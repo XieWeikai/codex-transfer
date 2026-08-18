@@ -51,6 +51,7 @@
         </div>
         <h3>Provider 标识不等于凭据</h3>
         <p><code>model_provider</code> 是路由和列表分桶标识。API Key、OAuth、Base URL 与模型映射存在于独立配置中，Codex Relay 从不复制或备份它们。</p>
+        <div class="docs-callout safe"><strong>大列表按需读取</strong><p>工作台首屏只读取 Session 摘要，超长标题会截断；将鼠标停在卡片上或点开详情后，才会读取完整标题。选择 Session 时只更新相关卡片和队列，不会重新创建整个网格。</p></div>
       </article>
 
       <article id="storage" data-doc-section data-keywords="jsonl sqlite model_provider session_meta state database">

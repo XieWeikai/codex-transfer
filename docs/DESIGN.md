@@ -23,6 +23,8 @@ The design follows the `codebase-design` skill's depth, seam, and locality vocab
 
 This is the external seam. Its interface covers migration preview/execute, Fork preview/execute, restore preview, and restore. Callers do not coordinate files, SQLite transactions, app-server lifecycle, backup generations, hashes, locks, or rollback themselves. Tests exercise the same interface as the HTTP adapter.
 
+The read side exposes one `workspace_snapshot` interface for the initial workbench load. It scans Codex storage once and returns status, bounded session summaries, and operation history together. Full session titles are fetched by ID only when a user deliberately opens a detail popover; internal rollout and database paths never enter the inventory response.
+
 ### `CodexRepository`
 
 This module owns the unstable Codex storage seam. It discovers state databases, validates rollout paths, detects writer locks, parses session metadata, performs atomic rollout replacement, and updates SQLite transactionally. Storage-version changes remain local to this module.
@@ -73,6 +75,8 @@ The interface is a single operational workbench rather than a sequence of inform
 - The operations drawer is the recovery seam. It exposes backup generations, audit-chain status, operation results, and restore actions without replacing the current selection context.
 
 Drag is progressive enhancement, not a requirement. Every draggable session has a click alternative; native form controls and focus order provide a keyboard path. Motion is reduced when the operating system requests it.
+
+Large inventories are kept responsive by treating the grid as a stable view. Session summaries contain at most 240 title characters, cards render at most 120, and normalized search text is prepared once per load. Selecting or clearing sessions updates only the affected cards, counts, queue, and target state; the complete grid is rebuilt only when filtering or sorting changes what must be visible.
 
 Risk guidance is contextual. Migration warnings are shown only after preflight and before execution; restore warnings are shown when restore is requested. Both flows require an acknowledgement plus an explicit confirmation phrase (`MIGRATE` or `RESTORE`). The execute control stays disabled until those conditions and the server-side preflight result are satisfied.
 

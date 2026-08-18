@@ -6,7 +6,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .engine import MigrationEngine, MigrationError
 from .repository import RepositoryError
@@ -27,10 +27,21 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/status":
                 self._json(self.server.engine.status())
+            elif path == "/api/workspace":
+                self._json(self.server.engine.workspace_snapshot())
             elif path == "/api/sessions":
                 self._json(
-                    {"sessions": [s.to_dict() for s in self.server.engine.repository.scan_sessions()]}
+                    {
+                        "sessions": [
+                            session.to_summary_dict()
+                            for session in self.server.engine.repository.scan_sessions()
+                        ]
+                    }
                 )
+            elif path.startswith("/api/sessions/"):
+                session_id = unquote(path.removeprefix("/api/sessions/"))
+                title = self.server.engine.repository.session_title(session_id)
+                self._json({"id": session_id, "title": title})
             elif path == "/api/operations":
                 self._json({"operations": self.server.engine.audit.list_operations()})
             elif path in ("/", "/index.html"):

@@ -26,6 +26,20 @@ class Session:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_summary_dict(self, title_limit: int = 240) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title[:title_limit],
+            "title_truncated": len(self.title) > title_limit,
+            "provider": self.provider,
+            "model": self.model,
+            "cwd": self.cwd,
+            "updated_at": self.updated_at,
+            "archived": self.archived,
+            "locked": self.locked,
+            "size_bytes": self.size_bytes,
+        }
+
 
 @dataclass(frozen=True)
 class TraceProfile:
@@ -66,7 +80,7 @@ class MigrationPlan:
         return {
             "source_provider": self.source_provider,
             "target_provider": self.target_provider,
-            "sessions": [s.to_dict() for s in self.sessions],
+            "sessions": [s.to_summary_dict() for s in self.sessions],
             "risks": [r.to_dict() for r in self.risks],
             "trace_profiles": [profile.to_dict() for profile in self.trace_profiles],
             "estimated_backup_bytes": self.estimated_backup_bytes,
