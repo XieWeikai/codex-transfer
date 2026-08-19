@@ -62,8 +62,7 @@ class FakeHost:
     def remove_staged_rollout(self, path):
         self.payloads.pop(path, None)
 
-    def fork_from_path(self, path, provider, cwd):
-        source = self.payloads[path]
+    def _create_fork(self, source, provider, cwd):
         new_id = f"fork-{len(self._sessions) + 1}"
         records = []
         for line in source.splitlines():
@@ -91,6 +90,15 @@ class FakeHost:
             host_id=self.descriptor.id,
         )
         return ForkResult(new_id, rollout, provider)
+
+    def fork(self, thread_id, provider):
+        session = self._sessions[thread_id]
+        return self._create_fork(
+            self.payloads[session.rollout_path], provider, session.cwd
+        )
+
+    def fork_from_path(self, path, provider, cwd):
+        return self._create_fork(self.payloads[path], provider, cwd)
 
     def set_archived(self, thread_id, archived):
         self._sessions[thread_id] = replace(self._sessions[thread_id], archived=archived)
@@ -287,6 +295,42 @@ class FleetTest(unittest.TestCase):
         self.assertIsNone(result["failed"])
         self.assertFalse(self.source.sessions()[0].archived)
         self.assertEqual(self.target.sessions()[0].provider, "target")
+
+    def test_same_remote_host_fork_uses_direct_fork(self):
+        plan = self.fleet.preview_transfer(
+            ["session-1"], "source-host", "source-host", "target", "", False
+        )
+        self.assertTrue(plan["executable"])
+        self.assertFalse(
+            any(risk["code"] == "experimental-path-import" for risk in plan["risks"])
+        )
+
+        result = self.fleet.transfer_batch(
+            ["session-1"], "source-host", "source-host", "target", "", False, "FORK"
+        )
+
+        self.assertIsNone(result["failed"])
+        self.assertFalse(self.source.sessions()[0].archived)
+        forked = next(item for item in self.source.sessions() if item.id != "session-1")
+        self.assertEqual(forked.provider, "target")
+        self.assertEqual(result["completed"][0]["kind"], "same_host_fork")
+
+    def test_same_remote_host_move_archives_source_and_restores(self):
+        result = self.fleet.transfer_batch(
+            ["session-1"], "source-host", "source-host", "target", "", True, "MIGRATE"
+        )
+        operation = result["completed"][0]
+        self.assertEqual(operation["kind"], "same_host_move")
+        self.assertTrue(
+            next(item for item in self.source.sessions() if item.id == "session-1").archived
+        )
+        self.assertTrue(self.fleet.preview_restore(operation["operation_id"])["executable"])
+
+        restored = self.fleet.restore(operation["operation_id"], "RESTORE")
+
+        self.assertEqual(restored["kind"], "same_host_restore")
+        self.assertFalse(self.source.sessions()[0].archived)
+        self.assertEqual([item.id for item in self.source.sessions()], ["session-1"])
 
     def test_cross_host_move_archives_source_and_restores(self):
         result = self.fleet.transfer_batch(

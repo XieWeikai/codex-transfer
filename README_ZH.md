@@ -26,6 +26,7 @@ Codex Transfer 是一个本地 Web 工作台，用于查看 Codex Session，并�
 |---|---|
 | Provider 工作区 | 按 Provider、Project、状态、关键词和更新时间浏览紧凑的 Session 卡片。 |
 | Desktop SSH 主机 | 自动识别 Codex Desktop 当前打开的免密 SSH 主机，并按主机独立浏览。 |
+| 任意主机路由 | 来源和目标均可选择任意已连接主机及 Provider，包括同一远程主机内的两个 Provider。 |
 | 跨主机传输 | 从主机 A/provider A Fork 到主机 B/provider B；可在验证目标后归档来源，形成可逆 Move。 |
 | 安全 Fork | 调用 Codex 官方 app-server `thread/fork` 接口，在目标 Provider 下创建持久化的新 thread。 |
 | 可审计移动 | 仅在预检和明确确认后更新原 rollout 与 SQLite 索引。 |
@@ -48,6 +49,7 @@ Codex home
 
 - **Fork** 保留来源 Session，并把新 thread 的创建交给 Codex app-server。
 - **移动** 同时修改 rollout 中的 `session_meta.payload.model_provider` 和 SQLite 中的 `threads.model_provider`。
+- **远程同主机 Fork** 直接调用该主机的官方 `thread/fork`；远程同主机 Move 验证新 Session ID 后归档来源，不通过 SSH 原地改写远程 SQLite。
 - **跨主机 Fork** 会把经过审计的 rollout 暂存到目标端，再由隔离的 Codex app-server 通过实验性 `thread/fork.path` 导入。
 - **跨主机 Move** 先创建并验证新的目标 Session ID，随后归档而不是删除来源。
 - **归档 / 还原归档**在所选本机或远程主机上调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。

@@ -67,6 +67,8 @@ ct move-preview --session SESSION_ID --source SOURCE_PROVIDER \
 
 Cross-host Move creates and verifies a new target thread before archiving the source. It does not delete the source. Batches are per-session and non-atomic; use each completed operation ID for independent restore.
 
+The source and target host may be the same remote host. In that case `--target-cwd` is optional: Fork uses official `thread/fork`, while Move creates and verifies a new target-provider Session ID before archiving the source. Local-to-local Move retains its existing in-place metadata migration semantics.
+
 ## Active-session detection
 
 Codex Transfer checks `thread-writer-locks/<session-id>.lock`. If the file is absent, the session is not locked. If it exists, Codex Transfer attempts a non-blocking exclusive `flock`: success means the file is stale or idle and the session is safe; failure means another Codex process owns the writer lock and every mutation is blocked. On platforms without `flock`, an existing lock file is treated conservatively as active.

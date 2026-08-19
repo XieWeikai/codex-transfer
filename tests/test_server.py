@@ -65,6 +65,11 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b'id="sourceHost"', html)
         self.assertIn(b'id="targetHost"', html)
         self.assertIn(b'id="targetCwd"', html)
+        self.assertIn(b"function usesFleetTransfer", script)
+        self.assertIn(
+            b"state.hosts.filter(host => host.connected && !host.loading)", script
+        )
+        self.assertIn(b'"same_host_move"', script)
         self.assertIn(b"session-card", script)
         self.assertIn(b'id="sessionPopover"', html)
         self.assertIn(b"/api/forks/preview", script)

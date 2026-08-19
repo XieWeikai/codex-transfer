@@ -32,6 +32,15 @@ class FleetError(RuntimeError):
     pass
 
 
+FLEET_TRANSFER_KINDS = {
+    "cross_host_fork",
+    "cross_host_move",
+    "same_host_fork",
+    "same_host_move",
+}
+FLEET_MOVE_KINDS = {"cross_host_move", "same_host_move"}
+
+
 @dataclass(frozen=True)
 class HostDescriptor:
     id: str
@@ -58,6 +67,8 @@ class HostAdapter(Protocol):
     def stage_rollout(self, operation_id: str, session_id: str, payload: bytes) -> str: ...
 
     def remove_staged_rollout(self, path: str) -> None: ...
+
+    def fork(self, thread_id: str, provider: str) -> ForkResult: ...
 
     def fork_from_path(self, path: str, provider: str, cwd: str) -> ForkResult: ...
 
@@ -156,6 +167,9 @@ class LocalHostAdapter:
 
     def fork_from_path(self, path: str, provider: str, cwd: str) -> ForkResult:
         return self.app_server.fork_from_path(path, provider, cwd)
+
+    def fork(self, thread_id: str, provider: str) -> ForkResult:
+        return self.app_server.fork(thread_id, provider)
 
     def set_archived(self, thread_id: str, archived: bool) -> None:
         self.app_server.set_archived(thread_id, archived)
@@ -390,6 +404,9 @@ json.dump(locked,sys.stdout)
 
     def fork_from_path(self, path: str, provider: str, cwd: str) -> ForkResult:
         return self.app_server.fork_from_path(self._validate_path(path), provider, cwd)
+
+    def fork(self, thread_id: str, provider: str) -> ForkResult:
+        return self.app_server.fork(thread_id, provider)
 
     def set_archived(self, thread_id: str, archived: bool) -> None:
         self.app_server.set_archived(thread_id, archived)
@@ -996,10 +1013,9 @@ class HostFleet:
     ) -> dict[str, Any]:
         if not session_ids:
             raise FleetError("Select at least one session")
-        if source_host_id == target_host_id:
-            raise FleetError("Cross-host transfer requires two different hosts")
+        same_host = source_host_id == target_host_id
         target_provider = require_safe_identifier(target_provider, "target provider")
-        if not target_cwd or not target_cwd.startswith("/"):
+        if not same_host and (not target_cwd or not target_cwd.startswith("/")):
             raise FleetError("Target project path must be an absolute path")
         source = self._host(source_host_id)
         target = self._host(target_host_id)
@@ -1008,10 +1024,12 @@ class HostFleet:
         if missing:
             raise FleetError("Unknown source sessions: " + ", ".join(missing))
         sessions = [indexed[session_id] for session_id in dict.fromkeys(session_ids)]
+        if same_host:
+            target_cwd = sessions[0].cwd if sessions else ""
         risks: list[Risk] = []
         profiles = []
         estimated = 0
-        if not target.cwd_exists(target_cwd):
+        if not same_host and not target.cwd_exists(target_cwd):
             risks.append(
                 Risk(
                     "critical",
@@ -1092,26 +1110,43 @@ class HostFleet:
                         "修复数据库后再进行跨主机操作。",
                     )
                 )
+        if not same_host:
+            risks.extend(
+                [
+                    Risk(
+                        "warning",
+                        "experimental-path-import",
+                        "跨主机导入依赖 Codex 实验性 thread/fork.path 接口，未来版本可能变化。",
+                        "保持两端 Codex CLI 为兼容版本，并永久保留本次 rollout 与数据库快照。",
+                    ),
+                    Risk(
+                        "warning",
+                        "credentials-not-moved",
+                        "Session 会传输，但 API Key、OAuth、Provider 配置和模型别名不会传输。",
+                        "必须提前在目标主机独立配置并验证目标 provider。",
+                    ),
+                ]
+            )
         risks.extend(
             [
                 Risk(
-                    "warning",
-                    "experimental-path-import",
-                    "跨主机导入依赖 Codex 实验性 thread/fork.path 接口，未来版本可能变化。",
-                    "保持两端 Codex CLI 为兼容版本，并永久保留本次 rollout 与数据库快照。",
-                ),
-                Risk(
-                    "warning",
-                    "credentials-not-moved",
-                    "Session 会传输，但 API Key、OAuth、Provider 配置和模型别名不会传输。",
-                    "必须提前在目标主机独立配置并验证目标 provider。",
-                ),
-                Risk(
                     "warning" if move else "info",
-                    "cross-host-move-archives-source" if move else "source-preserved",
-                    "跨主机 Move 会在目标创建新 Session ID，验证成功后归档来源；不会删除来源。"
-                    if move
-                    else "跨主机 Fork 会创建新 Session ID，来源 Session 保持不变。",
+                    (
+                        "same-host-move-archives-source"
+                        if move and same_host
+                        else "cross-host-move-archives-source"
+                        if move
+                        else "source-preserved"
+                    ),
+                    (
+                        "远程同主机 Move 会在目标 provider 创建新 Session ID，验证成功后归档原 Session；不会原地改写远程 SQLite。"
+                        if move and same_host
+                        else "跨主机 Move 会在目标创建新 Session ID，验证成功后归档来源；不会删除来源。"
+                        if move
+                        else "同一远程主机内 Fork 会通过 Codex 官方 thread/fork 创建新 Session，来源保持不变。"
+                        if same_host
+                        else "跨主机 Fork 会创建新 Session ID，来源 Session 保持不变。"
+                    ),
                     "Move 可通过恢复操作删除未变化的目标副本并还原来源归档。"
                     if move
                     else "先验证目标副本能够恢复，再继续聊天。",
@@ -1122,8 +1157,8 @@ class HostFleet:
             risks.append(
                 Risk(
                     "warning",
-                    "cross-host-batch-non-atomic",
-                    "批量跨主机操作逐条执行，整批不是原子事务。",
+                    "host-transfer-batch-non-atomic",
+                    "批量主机操作逐条执行，整批不是原子事务。",
                     "中途失败时保留已完成条目，并按操作记录逐条恢复。",
                 )
             )
@@ -1160,7 +1195,7 @@ class HostFleet:
                 session_ids, source_host_id, target_host_id, target_provider, target_cwd, move
             )
             if not plan["executable"]:
-                raise FleetError("Preflight has critical risks; cross-host transfer was not started")
+                raise FleetError("Preflight has critical risks; host transfer was not started")
             for session_id in session_ids:
                 try:
                     completed.append(
@@ -1199,11 +1234,20 @@ class HostFleet:
     ) -> dict[str, Any]:
         source = self._host(source_host_id)
         target = self._host(target_host_id)
+        same_host = source_host_id == target_host_id
         indexed = {session.id: session for session in source.sessions()}
         session = indexed.get(session_id)
         if session is None or session.locked or session.archived:
             raise FleetError("Source session changed after preflight")
-        kind = "cross_host_move" if move else "cross_host_fork"
+        kind = (
+            "same_host_move"
+            if move and same_host
+            else "cross_host_move"
+            if move
+            else "same_host_fork"
+            if same_host
+            else "cross_host_fork"
+        )
         operation_id, operation_dir = self.audit.new_operation(kind)
         manifest = {
             "operation_id": operation_id,
@@ -1241,17 +1285,28 @@ class HostFleet:
             file_entry.update({"host_id": source_host_id, "session_id": session.id})
             manifest["files"].append(file_entry)
             manifest["databases"].extend(source.backup_databases(self.audit, operation_dir, 0))
-            manifest["databases"].extend(
-                target.backup_databases(self.audit, operation_dir, len(manifest["databases"]))
-            )
+            if not same_host:
+                manifest["databases"].extend(
+                    target.backup_databases(
+                        self.audit, operation_dir, len(manifest["databases"])
+                    )
+                )
             manifest["status"] = "backed_up"
             self.audit.write_manifest(operation_dir, manifest)
             self.audit.append_event(operation_id, kind, "backed_up", {})
 
-            staged_path = target.stage_rollout(operation_id, session.id, payload)
-            if hashlib.sha256(target.fetch_rollout(staged_path)).hexdigest() != file_entry["before_sha256"]:
-                raise FleetError("Target staging hash does not match the audited source backup")
-            result = target.fork_from_path(staged_path, target_provider, target_cwd)
+            if same_host:
+                result = target.fork(session.id, target_provider)
+            else:
+                staged_path = target.stage_rollout(operation_id, session.id, payload)
+                if (
+                    hashlib.sha256(target.fetch_rollout(staged_path)).hexdigest()
+                    != file_entry["before_sha256"]
+                ):
+                    raise FleetError(
+                        "Target staging hash does not match the audited source backup"
+                    )
+                result = target.fork_from_path(staged_path, target_provider, target_cwd)
             target_sessions = {item.id: item for item in target.sessions()}
             created = target_sessions.get(result.thread_id)
             if created is None or created.provider != target_provider:
@@ -1310,9 +1365,9 @@ class HostFleet:
             detail = "; ".join(rollback_errors)
             if detail:
                 raise FleetError(
-                    f"Cross-host transfer failed and rollback was incomplete; use backup {operation_id}: {exc}; {detail}"
+                    f"Host transfer failed and rollback was incomplete; use backup {operation_id}: {exc}; {detail}"
                 ) from exc
-            raise FleetError(f"Cross-host transfer failed and was rolled back: {exc}") from exc
+            raise FleetError(f"Host transfer failed and was rolled back: {exc}") from exc
         finally:
             if staged_path:
                 with contextlib.suppress(Exception):
@@ -1320,7 +1375,7 @@ class HostFleet:
 
     def preview_restore(self, operation_id: str) -> dict[str, Any] | None:
         original = self.audit.read_manifest(operation_id)
-        if original.get("kind") not in {"cross_host_fork", "cross_host_move"}:
+        if original.get("kind") not in FLEET_TRANSFER_KINDS:
             return None
         risks: list[Risk] = []
         if original.get("status") != "completed" or original.get("restored_by"):
@@ -1348,7 +1403,7 @@ class HostFleet:
         source_session = {item.id: item for item in source.sessions()}.get(source_id)
         if source_session is None:
             risks.append(Risk("critical", "source-missing", "来源 Session 已不存在。", "使用审计备份手动恢复来源。"))
-        elif original["kind"] == "cross_host_move" and not source_session.archived:
+        elif original["kind"] in FLEET_MOVE_KINDS and not source_session.archived:
             risks.append(Risk("critical", "source-state-changed", "来源 Session 已不再归档。", "刷新状态并核对是否已经手动恢复。"))
         risks.append(
             Risk(
@@ -1372,7 +1427,7 @@ class HostFleet:
 
     def _restore_unlocked(self, operation_id: str, acknowledgement: str) -> dict[str, Any] | None:
         original = self.audit.read_manifest(operation_id)
-        if original.get("kind") not in {"cross_host_fork", "cross_host_move"}:
+        if original.get("kind") not in FLEET_TRANSFER_KINDS:
             return None
         if acknowledgement != "RESTORE":
             raise FleetError("Risk acknowledgement must equal RESTORE")
@@ -1383,10 +1438,12 @@ class HostFleet:
         target = self._host(original["target_host"])
         source_id = original["session_ids"][0]
         target_id = original["forked_session_ids"][0]
-        restore_id, restore_dir = self.audit.new_operation("cross_host_restore")
+        same_host = original["source_host"] == original["target_host"]
+        restore_kind = "same_host_restore" if same_host else "cross_host_restore"
+        restore_id, restore_dir = self.audit.new_operation(restore_kind)
         manifest = {
             "operation_id": restore_id,
-            "kind": "cross_host_restore",
+            "kind": restore_kind,
             "status": "preparing",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "restores": operation_id,
@@ -1411,12 +1468,15 @@ class HostFleet:
             entry.update({"host_id": original["target_host"], "session_id": target_id})
             manifest["files"].append(entry)
             manifest["databases"].extend(source.backup_databases(self.audit, restore_dir, 0))
-            manifest["databases"].extend(
-                target.backup_databases(self.audit, restore_dir, len(manifest["databases"]))
-            )
+            if not same_host:
+                manifest["databases"].extend(
+                    target.backup_databases(
+                        self.audit, restore_dir, len(manifest["databases"])
+                    )
+                )
             manifest["status"] = "backed_up"
             self.audit.write_manifest(restore_dir, manifest)
-            if original["kind"] == "cross_host_move":
+            if original["kind"] in FLEET_MOVE_KINDS:
                 source.set_archived(source_id, False)
                 source_unarchived = True
             target.delete_thread(target_id)
@@ -1425,7 +1485,9 @@ class HostFleet:
             self.audit.write_manifest(restore_dir, manifest)
             original["restored_by"] = restore_id
             self.audit.write_manifest(self.audit.operations / operation_id, original)
-            self.audit.append_event(restore_id, "cross_host_restore", "completed", {"restores": operation_id})
+            self.audit.append_event(
+                restore_id, restore_kind, "completed", {"restores": operation_id}
+            )
             self._invalidate_hosts(original["source_host"], original["target_host"])
             return manifest
         except Exception as exc:
@@ -1441,8 +1503,10 @@ class HostFleet:
                 manifest["rollback_error"] = rollback_error
             manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
             self.audit.write_manifest(restore_dir, manifest)
-            self.audit.append_event(restore_id, "cross_host_restore", manifest["status"], {"error": str(exc)})
-            raise FleetError(f"Cross-host restore failed: {exc}") from exc
+            self.audit.append_event(
+                restore_id, restore_kind, manifest["status"], {"error": str(exc)}
+            )
+            raise FleetError(f"Host transfer restore failed: {exc}") from exc
 
     @contextlib.contextmanager
     def _exclusive_lock(self):

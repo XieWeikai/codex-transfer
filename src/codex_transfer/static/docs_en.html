@@ -122,9 +122,10 @@ requires_openai_auth = true</code></pre>
       </article>
 
       <article id="cross-host" data-doc-section data-keywords="ssh remote host desktop transfer fork path">
-        <h2>Cross-host fork and move</h2>
+        <h2>Remote and cross-host fork and move</h2>
         <p>Codex Transfer discovers SSH connections launched directly by Codex or ChatGPT Desktop whose command includes <code>codex app-server proxy</code>. Only currently open aliases with key-based login are listed; arbitrary SSH configuration is not scanned.</p>
-        <ol><li>Inspect the source rollout, writer lock, and SQLite integrity.</li><li>Store the source rollout and consistent database snapshots from both hosts in the local audit directory.</li><li>Stage the rollout under target <code>CODEX_HOME/imports/codex-transfer</code>.</li><li>Start an isolated remote app-server and use experimental <code>thread/fork.path</code> to create a new session ID.</li><li>Verify provider, rollout, and index. A move archives the source only after full target verification.</li></ol>
+        <div class="docs-callout"><strong>The source and target may be the same remote host</strong><p>A same-host Fork calls official <code>thread/fork</code> directly. Remote Move verifies the new target-provider Session ID and then archives the source; it does not rewrite remote SQLite over SSH.</p></div>
+        <ol><li>Inspect the source rollout, writer lock, and SQLite integrity.</li><li>Store the source rollout and consistent database snapshots in the local audit directory.</li><li>When hosts differ, stage the rollout under target <code>CODEX_HOME/imports/codex-transfer</code>.</li><li>Use direct <code>thread/fork</code> on the same host, or experimental <code>thread/fork.path</code> across hosts.</li><li>Verify provider, rollout, and index. A move archives the source only after full target verification.</li></ol>
         <div class="docs-callout warning"><strong>Credentials do not travel with sessions</strong><p>Configure API keys, OAuth, base URLs, model aliases, and provider definitions independently on the target. The target project must already exist as an absolute path on that host.</p></div>
         <div class="docs-callout warning"><strong>This uses an experimental Codex interface</strong><p><code>thread/fork.path</code> can change between Codex versions. Keep the snapshot, test a fork first, and only then consider moving the source.</p></div>
       </article>

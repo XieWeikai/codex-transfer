@@ -26,6 +26,7 @@ Moving a Codex session is not a file rename. Current Codex discovery uses both r
 |---|---|
 | Provider workspace | Browse compact session cards by provider, project, status, keyword, and update time. |
 | Desktop SSH fleet | Discover the passwordless SSH hosts currently opened by Codex Desktop and browse each host independently. |
+| Any-host routing | Select any connected source host/provider and any target host/provider, including two providers on the same remote host. |
 | Cross-host transfer | Fork from host A/provider A into host B/provider B and optionally archive the verified source as a reversible Move. |
 | Safe Fork | Ask the official Codex app-server `thread/fork` interface to create a new durable thread under another provider. |
 | Audited Move | Update the original rollout and SQLite index only after preflight and explicit confirmation. |
@@ -48,6 +49,7 @@ Codex home
 
 - **Fork** leaves the source unchanged and delegates new-thread creation to Codex app-server.
 - **Move** changes `session_meta.payload.model_provider` in the rollout and `threads.model_provider` in SQLite.
+- **Same-remote-host Fork** calls that host's official `thread/fork` directly. A same-remote-host Move verifies the new Session ID and then archives the source instead of rewriting remote SQLite over SSH.
 - **Cross-host Fork** stages an audited rollout copy on the target and asks its isolated Codex app-server to import it through experimental `thread/fork.path`.
 - **Cross-host Move** creates and verifies a new target Session ID, then archives rather than deletes the source.
 - **Archive / Unarchive** use Codex app-server `thread/archive` and `thread/unarchive` on the selected local or remote host; they change visibility, not history or Provider.

@@ -142,9 +142,10 @@ requires_openai_auth = true</code></pre>
       </article>
 
       <article id="cross-host" data-doc-section data-keywords="ssh remote host desktop transfer fork path 跨主机 远程">
-        <h2>跨主机 Fork 与 Move</h2>
+        <h2>远程与跨主机 Fork / Move</h2>
         <p>Codex Transfer 从本机进程树中识别由 Codex/ChatGPT Desktop 直接启动、命令包含 <code>codex app-server proxy</code> 的 SSH 连接。只把这些已打开且可免密登录的别名列入主机清单，不会扫描任意 SSH config。</p>
-        <ol><li>从来源主机读取并检查 rollout、writer lock 与 SQLite 完整性。</li><li>在本机审计目录保存来源 rollout 和两端一致性数据库快照。</li><li>把 rollout 暂存到目标 <code>CODEX_HOME/imports/codex-transfer</code>。</li><li>启动与 Desktop proxy 隔离的远端 app-server，通过实验性 <code>thread/fork.path</code> 创建新 Session ID。</li><li>验证目标 Provider、rollout 和索引；Move 只有在全部验证成功后才归档来源。</li></ol>
+        <div class="docs-callout"><strong>来源和目标可以是同一台远程主机</strong><p>同主机 Fork 直接调用官方 <code>thread/fork</code>。远程 Move 会验证目标 Provider 下的新 Session ID，再归档来源；不会通过 SSH 原地改写远程 SQLite。</p></div>
+        <ol><li>从来源主机读取并检查 rollout、writer lock 与 SQLite 完整性。</li><li>在本机审计目录保存来源 rollout 和一致性数据库快照。</li><li>仅当主机不同时，把 rollout 暂存到目标 <code>CODEX_HOME/imports/codex-transfer</code>。</li><li>同主机调用 <code>thread/fork</code>，跨主机则调用实验性 <code>thread/fork.path</code>。</li><li>验证目标 Provider、rollout 和索引；Move 只有在全部验证成功后才归档来源。</li></ol>
         <div class="docs-callout warning"><strong>凭据不会随 Session 传输</strong><p>API Key、OAuth、Base URL、模型别名和 Provider 配置必须提前在目标主机独立设置。目标 Project 必须是目标主机上已经存在的绝对路径。</p></div>
         <div class="docs-callout warning"><strong>这是实验性 Codex 接口</strong><p><code>thread/fork.path</code> 可能随 Codex 版本变化。两端版本不兼容时预检或导入会失败；保留审计快照，先 Fork 验证，再考虑 Move。</p></div>
       </article>

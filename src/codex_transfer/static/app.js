@@ -116,6 +116,8 @@ const englishRisks = {
   "source-archived": ["The source session is archived.", "Unarchive it before a fork or move."],
   "experimental-path-import": ["Cross-host import uses an experimental Codex app-server interface.", "Keep the backup and validate a fork before moving the source."],
   "cross-host-move-archives-source": ["A cross-host move archives the source only after target verification.", "Verify the target session before relying on it."],
+  "same-host-move-archives-source": ["A same-host remote move creates a new session under the target provider, then archives the source.", "Verify the new session before relying on it; restore removes an unchanged target and unarchives the source."],
+  "host-transfer-batch-non-atomic": ["Batch host operations are not atomic.", "Use the audit trail to review every completed and failed item."],
   "cross-host-batch-non-atomic": ["Cross-host batch operations are not atomic.", "Use the audit trail to review every completed and failed item."],
   "target-missing": ["The target session no longer exists.", "Keep the audit backup and inspect the target host manually."],
   "source-missing": ["The source session no longer exists.", "Use the audit backup for manual recovery."],
@@ -177,6 +179,11 @@ function isArchiveAction(action = state.action) {
 }
 
 function isCrossHost(action = state.action) {
+  return !isArchiveAction(action) && Boolean($("#targetHost")?.value)
+    && state.activeHost !== $("#targetHost").value;
+}
+
+function usesFleetTransfer(action = state.action) {
   return !isArchiveAction(action) && Boolean($("#targetHost")?.value)
     && (state.activeHost !== "local" || $("#targetHost").value !== "local");
 }
@@ -547,7 +554,7 @@ function renderProviders() {
 function renderTargets() {
   const hostSelect = $("#targetHost");
   const previousHost = hostSelect.value;
-  const availableHosts = state.hosts.filter(host => host.connected && !host.loading && (state.activeHost === "local" || host.id !== state.activeHost));
+  const availableHosts = state.hosts.filter(host => host.connected && !host.loading);
   hostSelect.innerHTML = availableHosts.map(host =>
     `<option value="${escapeHtml(host.id)}">${escapeHtml(host.label)}</option>`
   ).join("");
@@ -962,12 +969,12 @@ function renderQueue() {
 function renderOperations() {
   $("#operationCount").textContent = state.operations.length;
   $("#operations").innerHTML = state.operations.length ? state.operations.map(operation => {
-    const canRestore = ["migration", "fork", "cross_host_fork", "cross_host_move"].includes(operation.kind) && operation.status === "completed" && !operation.restored_by;
+    const canRestore = ["migration", "fork", "cross_host_fork", "cross_host_move", "same_host_fork", "same_host_move"].includes(operation.kind) && operation.status === "completed" && !operation.restored_by;
     const route = operation.kind === "migration"
       ? `${escapeHtml(operation.source_provider)} → ${escapeHtml(operation.target_provider)}`
       : operation.kind === "fork"
         ? `${escapeHtml(operation.source_provider)} ↗ ${escapeHtml(operation.target_provider)} · Fork`
-        : operation.kind === "cross_host_fork" || operation.kind === "cross_host_move"
+        : ["cross_host_fork", "cross_host_move", "same_host_fork", "same_host_move"].includes(operation.kind)
           ? `${escapeHtml(operation.source_host)} → ${escapeHtml(operation.target_host)} · ${operation.kind.endsWith("fork") ? "Fork" : "Move"}`
         : operation.kind === "archive"
           ? `${escapeHtml(operation.host_id || "local")} · 归档 Session`
@@ -1016,11 +1023,11 @@ async function openMigrationDialog(action = state.action, sessions = selectedSes
   $("#migrateButton").disabled = true;
   dialog.showModal();
   try {
-    const previewPath = isArchiveAction(action) ? "/api/archive/preview" : isCrossHost(action) ? "/api/transfer/preview" : fork ? "/api/forks/preview" : "/api/preview";
+    const previewPath = isArchiveAction(action) ? "/api/archive/preview" : usesFleetTransfer(action) ? "/api/transfer/preview" : fork ? "/api/forks/preview" : "/api/preview";
     const payload = isArchiveAction(action)
       ? {session_ids: sessions.map(session => session.id), archived: archive, host_id: state.activeHost}
-      : isCrossHost(action)
-        ? {session_ids: sessions.map(session => session.id), source_host: state.activeHost, target_host: $("#targetHost").value, target_provider: target, target_cwd: $("#targetCwd").value, move: !fork}
+      : usesFleetTransfer(action)
+        ? {session_ids: sessions.map(session => session.id), source_host: state.activeHost, target_host: $("#targetHost").value, target_provider: target, target_cwd: isCrossHost(action) ? $("#targetCwd").value : sessions[0].cwd, move: !fork}
       : fork
         ? {session_ids: sessions.map(session => session.id), target_provider: target}
         : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: target};
@@ -1079,7 +1086,7 @@ async function migrate() {
       }
       return;
     }
-    if (isCrossHost(action)) {
+    if (usesFleetTransfer(action)) {
       const result = await api("/api/transfer", {
         method: "POST",
         body: JSON.stringify({
@@ -1087,7 +1094,7 @@ async function migrate() {
           source_host: state.activeHost,
           target_host: $("#targetHost").value,
           target_provider: $("#targetProvider").value,
-          target_cwd: $("#targetCwd").value,
+          target_cwd: isCrossHost(action) ? $("#targetCwd").value : sessions[0].cwd,
           move: !fork,
           acknowledgement: $("#migrateAck").value,
         }),
@@ -1096,8 +1103,8 @@ async function migrate() {
       state.selected.clear();
       state.plan = null;
       await load();
-      if (result.failed) toast(`跨主机操作完成 ${result.completed.length}/${sessions.length}；失败于 ${result.failed.session_id}：${result.failed.error}`, true);
-      else toast(`已完成 ${result.completed.length} 条跨主机${fork ? " Fork" : "移动"}，均已备份并审计。`);
+      if (result.failed) toast(`主机操作完成 ${result.completed.length}/${sessions.length}；失败于 ${result.failed.session_id}：${result.failed.error}`, true);
+      else toast(`已完成 ${result.completed.length} 条主机${fork ? " Fork" : "移动"}，均已备份并审计。`);
       return;
     }
     if (fork) {

@@ -22,6 +22,8 @@ Only SSH connections currently owned by the local Codex/ChatGPT Desktop process 
 
 Cross-host import relies on Codex's experimental `thread/fork.path` parameter. A CLI version mismatch can reject the import even when both databases are healthy. Move therefore means “create and verify target, then archive source,” not “copy and delete.” Automatic undo is blocked if the target rollout has received new chat or the source archive state has changed.
 
+Same-remote-host transfer does not use path import. It calls official `thread/fork` on that host. Remote Move still creates a new Session ID and archives the verified source so that rollback can remove an unchanged target and unarchive the source without direct remote SQLite rewriting.
+
 ## Divergence
 
 When a moved session receives a new turn, its rollout and SQLite state diverge from the migration's post-state. Exact rollback would delete that work. Codex Transfer detects the changed hashes and blocks automatic restore.

@@ -185,6 +185,8 @@
     [/^已完成 (\d+) 条(.+)；每条均已独立备份并审计。$/, "Completed $1 $2 operation(s); each was backed up and audited independently."],
     [/^跨主机操作完成 (\d+)\/(\d+)；失败于 (.+)：(.+)$/, "Cross-host operation completed $1/$2; failed at $3: $4"],
     [/^已完成 (\d+) 条跨主机(.+)，均已备份并审计。$/, "Completed $1 cross-host $2 operation(s); all were backed up and audited."],
+    [/^主机操作完成 (\d+)\/(\d+)；失败于 (.+)：(.+)$/, "Host operation completed $1/$2; failed at $3: $4"],
+    [/^已完成 (\d+) 条主机(.+)，均已备份并审计。$/, "Completed $1 host $2 operation(s); all were backed up and audited."],
     [/^批量 Fork 已完成 (\d+)\/(\d+)；失败于 (.+)：(.+)$/, "Batch fork completed $1/$2; failed at $3: $4"],
     [/^已完成 (\d+) 个 Fork；每个操作均已独立备份并写入审计账本。$/, "Completed $1 fork(s); each was backed up independently and added to the audit ledger."],
     [/^移动完成。操作 (.+) 已备份并写入审计账本。$/, "Move complete. Operation $1 was backed up and added to the audit ledger."],
