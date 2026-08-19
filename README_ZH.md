@@ -2,11 +2,11 @@
 
 # Codex Relay
 
-**在不同 Provider 之间移动或 Fork 本地 Codex Session，同时保留完整追溯能力。**
+**在不同 Provider 与 Codex Desktop 已连接主机之间移动或 Fork Session，同时保留完整追溯能力。**
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f855a.svg)](LICENSE)
-[![Local only](https://img.shields.io/badge/network-loopback%20only-4c956c)](#安全模型)
+[![Loopback UI](https://img.shields.io/badge/web%20UI-loopback%20only-4c956c)](#安全模型)
 [![Runtime](https://img.shields.io/badge/runtime-stdlib%20only-2f855a)](#开发)
 
 [English](README.md) | 简体中文 · [文档](docs/README.md) · [安全策略](SECURITY_ZH.md) · [贡献指南](CONTRIBUTING_ZH.md)
@@ -25,6 +25,8 @@ Codex Relay 是一个本地 Web 工作台，用于查看 Codex Session，并安�
 | 能力 | 说明 |
 |---|---|
 | Provider 工作区 | 按 Provider、Project、状态、关键词和更新时间浏览紧凑的 Session 卡片。 |
+| Desktop SSH 主机 | 自动识别 Codex Desktop 当前打开的免密 SSH 主机，并按主机独立浏览。 |
+| 跨主机传输 | 从主机 A/provider A Fork 到主机 B/provider B；可在验证目标后归档来源，形成可逆 Move。 |
 | 安全 Fork | 调用 Codex 官方 app-server `thread/fork` 接口，在目标 Provider 下创建持久化的新 thread。 |
 | 可审计移动 | 仅在预检和明确确认后更新原 rollout 与 SQLite 索引。 |
 | 归档管理 | 通过 Codex app-server 归档或还原归档，每个 Session 都有独立备份和审计。 |
@@ -45,6 +47,8 @@ Codex home
 
 - **Fork** 保留来源 Session，并把新 thread 的创建交给 Codex app-server。
 - **移动** 同时修改 rollout 中的 `session_meta.payload.model_provider` 和 SQLite 中的 `threads.model_provider`。
+- **跨主机 Fork** 会把经过审计的 rollout 暂存到目标端，再由隔离的 Codex app-server 通过实验性 `thread/fork.path` 导入。
+- **跨主机 Move** 先创建并验证新的目标 Session ID，随后归档而不是删除来源。
 - **归档 / 还原归档**调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。
 - **恢复** 本身也是一次新的审计操作。只有当前哈希仍与记录的操作后状态一致时才会执行。
 
@@ -57,6 +61,7 @@ Codex Relay 不会复制或保存 API Key、OAuth 状态、Provider 定义、Bas
 - Python 3.11 或更高版本
 - 执行 Fork 或归档操作时，`PATH` 中需要有 Codex CLI
 - 本地 Codex home 使用当前支持的 `state_5.sqlite` thread schema
+- 跨主机还要求：Codex Desktop 已建立免密 SSH 连接，远端有 Python 3，且登录环境的 `PATH` 中可找到 Codex CLI
 
 ### 安装
 
@@ -97,6 +102,7 @@ codex-relay \
 |---|---|
 | `serve` | 显式启动本地 Web 工作台。 |
 | `status` | 检查 Codex 存储、数据库完整性、Provider、锁和审计链状态。 |
+| `hosts` | 列出本机和 Codex Desktop 当前连接的 SSH 主机。 |
 | `sessions` | 按 Provider、Project、状态、搜索内容和排序方式筛选 Session。 |
 | `operations` | 列出备份与审计操作。 |
 | `fork-preview` / `fork` | 预检后创建保留来源 Session 的 Provider Fork。 |
@@ -108,10 +114,16 @@ codex-relay \
 使用 `--json` 获取机器可读输出；重复 `--session` 可以多选：
 
 ```bash
-csm sessions --provider openai --project /path/to/project --status ready --json
+csm hosts --json
+csm sessions --host A100-1 --provider openai --project /path/to/project --status ready --json
 
 csm fork-preview --session SESSION_ID --target TARGET_PROVIDER --json
 csm fork --session SESSION_ID --target TARGET_PROVIDER --acknowledge FORK --json
+
+csm fork-preview --session SESSION_ID --source-host A100-1 --target-host local \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
+csm fork --session SESSION_ID --source-host A100-1 --target-host local \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --acknowledge FORK --json
 
 csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
 csm move --session SESSION_ID --source SOURCE --target TARGET \
@@ -164,6 +176,8 @@ Codex Relay 是一个同用户、本地运行的管理工具：
 ## 已知限制
 
 - Codex 本地存储不是稳定的公开 API；程序会拒绝修改未知 schema。
+- 跨主机导入依赖实验性的 `thread/fork.path`；两端 CLI 版本不兼容时可能拒绝请求。Relay 会保留两端快照，但无法保证未来协议兼容性。
+- 只识别由本机 Codex/ChatGPT Desktop 直接启动的 SSH proxy；不会枚举任意 SSH config 主机，也无法发现仅在远端启动的 relay。
 - Provider 迁移改变的是路由与发现分桶，不会转换后端协议。
 - 不透明的 `encrypted_content` 在其他后端可能无法继续使用。
 - 历史 rollout 没有可靠记录每一轮对应的 Provider，无法自动重建混合 Provider 来源。

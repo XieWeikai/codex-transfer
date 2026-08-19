@@ -22,13 +22,16 @@ class Session:
     locked: bool
     rollout_provider: str | None
     size_bytes: int
+    host_id: str = "local"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_summary_dict(self, title_limit: int = 240) -> dict[str, Any]:
         return {
+            "key": f"{self.host_id}:{self.id}",
             "id": self.id,
+            "host_id": self.host_id,
             "title": self.title[:title_limit],
             "title_truncated": len(self.title) > title_limit,
             "provider": self.provider,

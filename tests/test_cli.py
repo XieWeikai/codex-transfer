@@ -136,8 +136,28 @@ class FakeEngine:
             "batch_atomic": False,
         }
 
+    def preview_transfer(self, session_ids, source_host, target_host, target, cwd, move):
+        self.calls.append(("transfer-preview", session_ids, source_host, target_host, target, cwd, move))
+        return {"sessions": session_ids, "risks": [], "executable": True}
+
+    def transfer(self, session_ids, source_host, target_host, target, cwd, move, acknowledgement):
+        self.calls.append(("transfer", session_ids, source_host, target_host, target, cwd, move, acknowledgement))
+        return {"requested_session_ids": session_ids, "completed": [{"operation_id": "cross-1"}], "failed": None}
+
 
 class CliTest(unittest.TestCase):
+    def test_cross_host_fork_routes_to_fleet_engine(self) -> None:
+        args = parser().parse_args([
+            "fork", "--session", "s-1", "--target", "target",
+            "--source-host", "remote-a", "--target-host", "local",
+            "--target-cwd", "/work/one", "--acknowledge", "FORK",
+        ])
+        engine = FakeEngine()
+        result, code = execute_command(args, engine)
+        self.assertEqual(code, 0)
+        self.assertIsNone(result["failed"])
+        self.assertEqual(engine.calls[0], ("transfer", ["s-1"], "remote-a", "local", "target", "/work/one", False, "FORK"))
+
     def test_legacy_and_explicit_serve_arguments_are_supported(self) -> None:
         legacy = parser().parse_args(["--port", "9000"])
         explicit = parser().parse_args(["serve", "--port", "9001"])

@@ -16,6 +16,12 @@ Fork limits the blast radius because the original remains intact. It does not ma
 
 Session operations never copy API keys, OAuth tokens, account state, provider definitions, base URLs, or model aliases. The target provider must already be configured in Codex or the user's provider manager. Credentials are intentionally excluded from manifests and backups.
 
+## Cross-host transport
+
+Only SSH connections currently owned by the local Codex/ChatGPT Desktop process are eligible. Relay uses passwordless `BatchMode` and starts an isolated app-server on the selected host. Session content crosses SSH and is also written to the local backup directory; credentials do not cross. The target Project must already exist as an absolute path.
+
+Cross-host import relies on Codex's experimental `thread/fork.path` parameter. A CLI version mismatch can reject the import even when both databases are healthy. Move therefore means “create and verify target, then archive source,” not “copy and delete.” Automatic undo is blocked if the target rollout has received new chat or the source archive state has changed.
+
 ## Divergence
 
 When a moved session receives a new turn, its rollout and SQLite state diverge from the migration's post-state. Exact rollback would delete that work. Codex Relay detects the changed hashes and blocks automatic restore.

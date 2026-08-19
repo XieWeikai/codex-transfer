@@ -2,11 +2,11 @@
 
 # Codex Relay
 
-**Move or fork local Codex sessions between providers without giving up traceability.**
+**Move or fork Codex sessions across providers and Desktop-connected hosts without giving up traceability.**
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f855a.svg)](LICENSE)
-[![Local only](https://img.shields.io/badge/network-loopback%20only-4c956c)](#security-model)
+[![Loopback UI](https://img.shields.io/badge/web%20UI-loopback%20only-4c956c)](#security-model)
 [![Runtime](https://img.shields.io/badge/runtime-stdlib%20only-2f855a)](#development)
 
 English | [简体中文](README_ZH.md) · [Documentation](docs/README.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
@@ -25,6 +25,8 @@ Moving a Codex session is not a file rename. Current Codex discovery uses both r
 | Capability | What it does |
 |---|---|
 | Provider workspace | Browse compact session cards by provider, project, status, keyword, and update time. |
+| Desktop SSH fleet | Discover the passwordless SSH hosts currently opened by Codex Desktop and browse each host independently. |
+| Cross-host transfer | Fork from host A/provider A into host B/provider B and optionally archive the verified source as a reversible Move. |
 | Safe Fork | Ask the official Codex app-server `thread/fork` interface to create a new durable thread under another provider. |
 | Audited Move | Update the original rollout and SQLite index only after preflight and explicit confirmation. |
 | Archive control | Archive or unarchive sessions through Codex app-server with per-session backup and audit records. |
@@ -45,6 +47,8 @@ Codex home
 
 - **Fork** leaves the source unchanged and delegates new-thread creation to Codex app-server.
 - **Move** changes `session_meta.payload.model_provider` in the rollout and `threads.model_provider` in SQLite.
+- **Cross-host Fork** stages an audited rollout copy on the target and asks its isolated Codex app-server to import it through experimental `thread/fork.path`.
+- **Cross-host Move** creates and verifies a new target Session ID, then archives rather than deletes the source.
 - **Archive / Unarchive** use Codex app-server `thread/archive` and `thread/unarchive`; they change visibility, not history or Provider.
 - **Restore** is a new audited operation. It proceeds only when current hashes still match the recorded post-state.
 
@@ -57,6 +61,7 @@ Credentials, API keys, OAuth state, provider definitions, base URLs, and model a
 - Python 3.11 or newer
 - Codex CLI available on `PATH` for Fork and archive operations
 - A local Codex home using the supported `state_5.sqlite` thread schema
+- For cross-host use: a passwordless Codex Desktop SSH connection, Python 3, and Codex CLI on the remote login `PATH`
 
 ### Install
 
@@ -97,6 +102,7 @@ Running `codex-relay` or `csm` without a subcommand still starts the Web UI. The
 |---|---|
 | `serve` | Start the local Web workbench explicitly. |
 | `status` | Check Codex storage, database integrity, providers, locks, and audit-chain health. |
+| `hosts` | List this Mac and SSH hosts currently connected by Codex Desktop. |
 | `sessions` | Filter sessions by Provider, Project, status, search text, and sort order. |
 | `operations` | List backup and audit operations. |
 | `fork-preview` / `fork` | Preflight, then create provider forks with source preservation. |
@@ -108,10 +114,16 @@ Running `codex-relay` or `csm` without a subcommand still starts the Web UI. The
 Use `--json` for machine-readable output. Repeat `--session` for multi-selection:
 
 ```bash
-csm sessions --provider openai --project /path/to/project --status ready --json
+csm hosts --json
+csm sessions --host A100-1 --provider openai --project /path/to/project --status ready --json
 
 csm fork-preview --session SESSION_ID --target TARGET_PROVIDER --json
 csm fork --session SESSION_ID --target TARGET_PROVIDER --acknowledge FORK --json
+
+csm fork-preview --session SESSION_ID --source-host A100-1 --target-host local \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
+csm fork --session SESSION_ID --source-host A100-1 --target-host local \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --acknowledge FORK --json
 
 csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
 csm move --session SESSION_ID --source SOURCE --target TARGET \
@@ -164,6 +176,8 @@ Please report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
 ## Known limits
 
 - Codex local storage is not a stable public API. Unknown schemas are refused rather than modified.
+- Cross-host import uses Codex's experimental `thread/fork.path`; incompatible CLI versions can reject it. Relay keeps source and target snapshots but cannot promise future protocol compatibility.
+- Only SSH proxy processes directly owned by the local Codex/ChatGPT Desktop app are discovered. Arbitrary SSH config hosts and relay processes started solely on a remote machine are intentionally excluded.
 - Provider migration changes routing and discovery, not backend compatibility.
 - Opaque `encrypted_content` may be unusable with another backend.
 - Historical rollouts do not reliably identify the provider responsible for every turn; mixed-provider provenance cannot be reconstructed automatically.

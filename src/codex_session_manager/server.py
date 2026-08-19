@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .engine import MigrationEngine, MigrationError
+from .fleet import FleetError
 from .repository import RepositoryError
 
 
@@ -29,15 +30,10 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                 self._json(self.server.engine.status())
             elif path == "/api/workspace":
                 self._json(self.server.engine.workspace_snapshot())
+            elif path == "/api/hosts":
+                self._json(self.server.engine.host_snapshot())
             elif path == "/api/sessions":
-                self._json(
-                    {
-                        "sessions": [
-                            session.to_summary_dict()
-                            for session in self.server.engine.repository.scan_sessions()
-                        ]
-                    }
-                )
+                self._json({"sessions": self.server.engine.workspace_snapshot()["sessions"]})
             elif path.startswith("/api/sessions/"):
                 session_id = unquote(path.removeprefix("/api/sessions/"))
                 title = self.server.engine.repository.session_title(session_id)
@@ -98,6 +94,25 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
                     payload.get("target_provider", ""),
                     payload.get("acknowledgement", ""),
                 )
+            elif path == "/api/transfer/preview":
+                result = self.server.engine.preview_transfer(
+                    payload.get("session_ids", []),
+                    payload.get("source_host", ""),
+                    payload.get("target_host", ""),
+                    payload.get("target_provider", ""),
+                    payload.get("target_cwd", ""),
+                    bool(payload.get("move")),
+                )
+            elif path == "/api/transfer":
+                result = self.server.engine.transfer(
+                    payload.get("session_ids", []),
+                    payload.get("source_host", ""),
+                    payload.get("target_host", ""),
+                    payload.get("target_provider", ""),
+                    payload.get("target_cwd", ""),
+                    bool(payload.get("move")),
+                    payload.get("acknowledgement", ""),
+                )
             elif path == "/api/archive/preview":
                 result = self.server.engine.preview_archive(
                     payload.get("session_ids", []), payload.get("archived")
@@ -129,7 +144,7 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
         print(f"[web] {self.address_string()} {format % args}")
 
     def _handle_exception(self, exc: Exception) -> None:
-        if isinstance(exc, (MigrationError, RepositoryError, ValueError)):
+        if isinstance(exc, (MigrationError, FleetError, RepositoryError, ValueError)):
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         else:
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "Internal server error")

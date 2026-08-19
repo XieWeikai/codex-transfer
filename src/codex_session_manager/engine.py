@@ -6,12 +6,15 @@ import shutil
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .app_server import ArchiveAdapter, ForkAdapter, ForkResult
 from .audit import AuditStore, sha256_database, sha256_file
 from .model import MigrationPlan, Risk, Session, require_safe_identifier
 from .repository import CodexRepository, RepositoryError
+
+if TYPE_CHECKING:
+    from .fleet import HostFleet
 
 try:
     import fcntl
@@ -32,11 +35,13 @@ class MigrationEngine:
         audit: AuditStore,
         fork_adapter: ForkAdapter | None = None,
         archive_adapter: ArchiveAdapter | None = None,
+        fleet: "HostFleet | None" = None,
     ):
         self.repository = repository
         self.audit = audit
         self.fork_adapter = fork_adapter
         self.archive_adapter = archive_adapter
+        self.fleet = fleet
         self.lock_path = audit.root / "manager.lock"
 
     def status(self, sessions: list[Session] | None = None) -> dict[str, Any]:
@@ -60,13 +65,62 @@ class MigrationEngine:
             "audit_chain_valid": self.audit.verify_chain(),
         }
 
-    def workspace_snapshot(self) -> dict[str, Any]:
+    def workspace_snapshot(self, wait_for_remote: bool = False) -> dict[str, Any]:
         sessions = self.repository.scan_sessions()
+        if self.fleet is not None:
+            return self.fleet.workspace(
+                self.status(sessions),
+                self.audit.list_operations(),
+                sessions,
+                wait_for_remote=wait_for_remote,
+            )
         return {
             "status": self.status(sessions),
             "sessions": [session.to_summary_dict() for session in sessions],
             "operations": self.audit.list_operations(),
         }
+
+    def host_snapshot(self) -> dict[str, Any]:
+        if self.fleet is None:
+            return {"ready": True, "hosts": [], "sessions": []}
+        return self.fleet.host_snapshot()
+
+    def preview_transfer(
+        self,
+        session_ids: list[str],
+        source_host: str,
+        target_host: str,
+        target_provider: str,
+        target_cwd: str,
+        move: bool,
+    ) -> dict[str, Any]:
+        if self.fleet is None:
+            raise MigrationError("Cross-host support is unavailable")
+        return self.fleet.preview_transfer(
+            session_ids, source_host, target_host, target_provider, target_cwd, move
+        )
+
+    def transfer(
+        self,
+        session_ids: list[str],
+        source_host: str,
+        target_host: str,
+        target_provider: str,
+        target_cwd: str,
+        move: bool,
+        acknowledgement: str,
+    ) -> dict[str, Any]:
+        if self.fleet is None:
+            raise MigrationError("Cross-host support is unavailable")
+        return self.fleet.transfer_batch(
+            session_ids,
+            source_host,
+            target_host,
+            target_provider,
+            target_cwd,
+            move,
+            acknowledgement,
+        )
 
     def preview(
         self, session_ids: list[str], source_provider: str, target_provider: str
@@ -532,6 +586,10 @@ class MigrationEngine:
                 raise MigrationError(f"Fork failed and was rolled back: {exc}") from exc
 
     def preview_restore(self, operation_id: str) -> dict[str, Any]:
+        if self.fleet is not None:
+            cross_host = self.fleet.preview_restore(operation_id)
+            if cross_host is not None:
+                return cross_host
         original = self.audit.read_manifest(operation_id)
         if original.get("kind") not in {"migration", "fork"} or original.get("status") != "completed":
             raise MigrationError("Only completed migration or fork operations can be restored")
@@ -684,6 +742,10 @@ class MigrationEngine:
                 raise MigrationError(f"Migration failed and was rolled back: {exc}") from exc
 
     def restore(self, operation_id: str, acknowledgement: str) -> dict[str, Any]:
+        if self.fleet is not None:
+            cross_host = self.fleet.restore(operation_id, acknowledgement)
+            if cross_host is not None:
+                return cross_host
         if acknowledgement != "RESTORE":
             raise MigrationError("Risk acknowledgement must equal RESTORE")
         with self._exclusive_lock():

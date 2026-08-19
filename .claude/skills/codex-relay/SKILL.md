@@ -1,6 +1,6 @@
 ---
 name: codex-relay
-description: Inspect, filter, preflight, fork, move, archive, unarchive, restore, and audit local Codex sessions with the Codex Relay CLI. Use when a user asks to find Codex sessions, determine whether one is in use, change its provider or archive visibility, create a safer provider fork, inspect operation history, or recover an unchanged migration or fork.
+description: Inspect, filter, preflight, fork, move, archive, unarchive, restore, and audit Codex sessions across local and Desktop-connected SSH hosts with the Codex Relay CLI.
 ---
 
 # Codex Relay CLI
@@ -25,7 +25,9 @@ Run the narrowest useful command:
 
 ```bash
 codex-relay status --json
+codex-relay hosts --json
 codex-relay sessions --json
+codex-relay sessions --host HOST_ID --json
 codex-relay sessions --provider PROVIDER --project /exact/project/path --status ready --json
 codex-relay sessions --search QUERY --sort newest --json
 codex-relay operations --limit 20 --json
@@ -34,6 +36,8 @@ codex-relay operations --limit 20 --json
 Valid session statuses are `all`, `ready`, `locked`, and `archived`. Valid sorts are `newest`, `oldest`, `title`, and `size`.
 
 Never guess a Session ID, operation ID, source Provider, or target Provider. Resolve them from read-only output and ask the user when more than one target matches.
+
+For cross-host work, use only host IDs returned by `hosts`. The target Project must be an existing absolute path on the target host. Relay never copies credentials or Provider configuration.
 
 ## Mutation safety gate
 
@@ -91,6 +95,18 @@ codex-relay move \
 ```
 
 Stop active Codex tasks before previewing. Never edit rollout JSONL or SQLite directly as a substitute for this command.
+
+## Cross-host Fork or Move
+
+Add all three routing options to the normal Fork or Move command:
+
+```bash
+codex-relay fork-preview --session SESSION_ID \
+  --source-host SOURCE_HOST --target-host TARGET_HOST \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
+```
+
+Cross-host import uses experimental `thread/fork.path`. Prefer Fork. Cross-host Move creates and verifies a new target Session ID, then archives rather than deletes the source. A batch is not atomic; report every completed operation ID and the first failure exactly.
 
 ## Restore or undo
 

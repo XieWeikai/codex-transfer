@@ -31,9 +31,11 @@ class StaticAssetsTest(unittest.TestCase):
     def test_assets_are_packaged(self) -> None:
         self.assertIn(b"Codex Relay", SessionManagerHandler._static("index.html"))
         self.assertIn(b"/api/workspace", SessionManagerHandler._static("app.js"))
+        self.assertIn(b"/api/hosts", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/preview", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/fork", SessionManagerHandler._static("app.js"))
         self.assertIn(b"/api/archive", SessionManagerHandler._static("app.js"))
+        self.assertIn(b"/api/transfer", SessionManagerHandler._static("app.js"))
         self.assertIn(b"thread/fork", SessionManagerHandler._static("docs.html"))
         self.assertIn(b"codex-relay-theme", SessionManagerHandler._static("docs.js"))
 
@@ -47,6 +49,9 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b'addEventListener("drop"', script)
         self.assertIn("支持多选".encode(), script)
         self.assertIn(b'id="projectFilter"', html)
+        self.assertIn(b'id="sourceHost"', html)
+        self.assertIn(b'id="targetHost"', html)
+        self.assertIn(b'id="targetCwd"', html)
         self.assertIn(b"session-card", script)
         self.assertIn(b'id="sessionPopover"', html)
         self.assertIn(b"/api/forks/preview", script)

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-session-manager"
-version = "0.4.0"
-description = "Codex Relay: auditable session moves and provider forks"
+version = "0.5.0"
+description = "Codex Relay: auditable session moves and forks across providers and hosts"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

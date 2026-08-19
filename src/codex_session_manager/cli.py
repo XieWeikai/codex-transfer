@@ -11,6 +11,7 @@ from typing import Any, Callable, Sequence, TextIO
 from .app_server import AppServerError, CodexAppServer
 from .audit import AuditStore
 from .engine import MigrationEngine, MigrationError
+from .fleet import FleetError, HostFleet
 from .repository import CodexRepository, RepositoryError
 from .server import SessionManagerServer
 
@@ -59,7 +60,7 @@ def _add_command_storage_options(target: argparse.ArgumentParser) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="codex-relay",
-        description="Inspect, fork, move, archive, and restore local Codex sessions safely",
+        description="Inspect, fork, move, archive, and restore Codex sessions across providers and hosts",
     )
     _add_storage_options(result)
     _add_server_options(result)
@@ -73,9 +74,14 @@ def parser() -> argparse.ArgumentParser:
     _add_command_storage_options(status)
     _add_output_option(status)
 
-    sessions = subparsers.add_parser("sessions", help="List and filter local sessions")
+    hosts = subparsers.add_parser("hosts", help="List local and active Codex Desktop SSH hosts")
+    _add_command_storage_options(hosts)
+    _add_output_option(hosts)
+
+    sessions = subparsers.add_parser("sessions", help="List and filter sessions by host")
     _add_command_storage_options(sessions)
     sessions.add_argument("--provider", help="Only sessions in this provider bucket")
+    sessions.add_argument("--host", default="all", help="Host ID, or all (default)")
     sessions.add_argument("--project", help="Only sessions whose cwd exactly matches this path")
     sessions.add_argument(
         "--status",
@@ -100,12 +106,18 @@ def parser() -> argparse.ArgumentParser:
     _add_command_storage_options(fork_preview)
     fork_preview.add_argument("--session", action="append", required=True, dest="session_ids")
     fork_preview.add_argument("--target", required=True, dest="target_provider")
+    fork_preview.add_argument("--source-host", default="local")
+    fork_preview.add_argument("--target-host", default="local")
+    fork_preview.add_argument("--target-cwd", default="")
     _add_output_option(fork_preview)
 
     fork = subparsers.add_parser("fork", help="Back up and fork one or more sessions")
     _add_command_storage_options(fork)
     fork.add_argument("--session", action="append", required=True, dest="session_ids")
     fork.add_argument("--target", required=True, dest="target_provider")
+    fork.add_argument("--source-host", default="local")
+    fork.add_argument("--target-host", default="local")
+    fork.add_argument("--target-cwd", default="")
     fork.add_argument("--acknowledge", required=True, choices=["FORK"])
     _add_output_option(fork)
 
@@ -114,6 +126,9 @@ def parser() -> argparse.ArgumentParser:
     move_preview.add_argument("--session", action="append", required=True, dest="session_ids")
     move_preview.add_argument("--source", required=True, dest="source_provider")
     move_preview.add_argument("--target", required=True, dest="target_provider")
+    move_preview.add_argument("--source-host", default="local")
+    move_preview.add_argument("--target-host", default="local")
+    move_preview.add_argument("--target-cwd", default="")
     _add_output_option(move_preview)
 
     move = subparsers.add_parser("move", help="Back up and move original sessions")
@@ -121,6 +136,9 @@ def parser() -> argparse.ArgumentParser:
     move.add_argument("--session", action="append", required=True, dest="session_ids")
     move.add_argument("--source", required=True, dest="source_provider")
     move.add_argument("--target", required=True, dest="target_provider")
+    move.add_argument("--source-host", default="local")
+    move.add_argument("--target-host", default="local")
+    move.add_argument("--target-cwd", default="")
     move.add_argument("--acknowledge", required=True, choices=["MIGRATE"])
     _add_output_option(move)
 
@@ -166,11 +184,13 @@ def build_engine(args: argparse.Namespace) -> MigrationEngine:
     repository = CodexRepository(args.codex_home)
     audit = AuditStore(args.data_dir)
     app_server = CodexAppServer(repository.home, executable=args.codex_bin)
+    fleet = HostFleet(repository, audit, app_server)
     return MigrationEngine(
         repository,
         audit,
         app_server,
         app_server,
+        fleet,
     )
 
 
@@ -188,10 +208,16 @@ def _serve(args: argparse.Namespace, engine: MigrationEngine) -> None:
 
 
 def _filtered_sessions(args: argparse.Namespace, engine: MigrationEngine) -> list[dict[str, Any]]:
-    sessions = [session.to_summary_dict() for session in engine.repository.scan_sessions()]
+    sessions = (
+        engine.workspace_snapshot(wait_for_remote=True)["sessions"]
+        if hasattr(engine, "workspace_snapshot")
+        else [session.to_summary_dict() for session in engine.repository.scan_sessions()]
+    )
     query = args.search.casefold().strip()
 
     def included(session: dict[str, Any]) -> bool:
+        if getattr(args, "host", "all") != "all" and session.get("host_id", "local") != args.host:
+            return False
         if args.provider and session["provider"] != args.provider:
             return False
         if args.project is not None and session["cwd"] != args.project:
@@ -220,6 +246,17 @@ def _filtered_sessions(args: argparse.Namespace, engine: MigrationEngine) -> lis
 
 
 def _fork_batch(args: argparse.Namespace, engine: MigrationEngine) -> tuple[dict[str, Any], int]:
+    if args.source_host != "local" or args.target_host != "local":
+        result = engine.transfer(
+            args.session_ids,
+            args.source_host,
+            args.target_host,
+            args.target_provider,
+            args.target_cwd,
+            False,
+            args.acknowledge,
+        )
+        return result, int(result["failed"] is not None)
     plan = engine.preview_forks(args.session_ids, args.target_provider)
     if not plan.executable:
         raise MigrationError("Preflight has critical risks; fork batch was not started")
@@ -242,6 +279,9 @@ def _fork_batch(args: argparse.Namespace, engine: MigrationEngine) -> tuple[dict
 def execute_command(args: argparse.Namespace, engine: MigrationEngine) -> tuple[Any, int]:
     if args.command == "status":
         return engine.status(), 0
+    if args.command == "hosts":
+        hosts = engine.workspace_snapshot(wait_for_remote=True).get("hosts", [])
+        return {"count": len(hosts), "hosts": hosts}, 0
     if args.command == "sessions":
         sessions = _filtered_sessions(args, engine)
         return {"count": len(sessions), "sessions": sessions}, 0
@@ -251,14 +291,43 @@ def execute_command(args: argparse.Namespace, engine: MigrationEngine) -> tuple[
             operations = operations[: args.limit]
         return {"count": len(operations), "operations": operations}, 0
     if args.command == "fork-preview":
+        if args.source_host != "local" or args.target_host != "local":
+            return engine.preview_transfer(
+                args.session_ids,
+                args.source_host,
+                args.target_host,
+                args.target_provider,
+                args.target_cwd,
+                False,
+            ), 0
         return engine.preview_forks(args.session_ids, args.target_provider).to_dict(), 0
     if args.command == "fork":
         return _fork_batch(args, engine)
     if args.command == "move-preview":
+        if args.source_host != "local" or args.target_host != "local":
+            return engine.preview_transfer(
+                args.session_ids,
+                args.source_host,
+                args.target_host,
+                args.target_provider,
+                args.target_cwd,
+                True,
+            ), 0
         return engine.preview(
             args.session_ids, args.source_provider, args.target_provider
         ).to_dict(), 0
     if args.command == "move":
+        if args.source_host != "local" or args.target_host != "local":
+            result = engine.transfer(
+                args.session_ids,
+                args.source_host,
+                args.target_host,
+                args.target_provider,
+                args.target_cwd,
+                True,
+                args.acknowledge,
+            )
+            return result, int(result["failed"] is not None)
         return engine.execute(
             args.session_ids,
             args.source_provider,
@@ -344,6 +413,19 @@ def _print_operations(data: dict[str, Any], out: TextIO) -> None:
         )
 
 
+def _print_hosts(data: dict[str, Any], out: TextIO) -> None:
+    print(f"{data['count']} host(s)", file=out)
+    for host in data["hosts"]:
+        state = "connected" if host.get("connected") else "unavailable"
+        print(
+            f"{host['id']}  {host.get('kind', '-')}  {state}  "
+            f"sessions={host.get('session_count', 0)}  providers={','.join(host.get('providers', []))}",
+            file=out,
+        )
+        if host.get("error"):
+            print(f"  {host['error']}", file=out)
+
+
 def _print_plan(data: dict[str, Any], out: TextIO) -> None:
     print(
         f"Preflight: {'executable' if data.get('executable') else 'BLOCKED'}; "
@@ -362,6 +444,8 @@ def _print_result(command: str, data: Any, out: TextIO) -> None:
         _print_status(data, out)
     elif command == "sessions":
         _print_sessions(data, out)
+    elif command == "hosts":
+        _print_hosts(data, out)
     elif command == "operations":
         _print_operations(data, out)
     elif command.endswith("-preview"):
@@ -410,7 +494,7 @@ def main(
         else:
             _print_result(args.command, data, stdout)
         return exit_code
-    except (MigrationError, RepositoryError, AppServerError, OSError, ValueError) as exc:
+    except (MigrationError, FleetError, RepositoryError, AppServerError, OSError, ValueError) as exc:
         if getattr(args, "json", False):
             print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=stderr)
         else:

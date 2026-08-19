@@ -32,13 +32,15 @@
   <main class="app-shell" id="sessionWorkspace">
     <aside class="provider-sidebar" aria-label="Provider 分类">
       <div class="sidebar-heading">
-        <span>PROVIDERS</span>
-        <strong id="providerCount">0</strong>
+        <span>HOST</span>
+        <strong id="hostState">LOCAL</strong>
       </div>
+      <label class="sidebar-host"><span class="sr-only">来源主机</span><select id="sourceHost" aria-label="来源主机"></select></label>
+      <div class="sidebar-heading provider-heading"><span>PROVIDERS</span><strong id="providerCount">0</strong></div>
       <nav id="providerList" class="provider-list"></nav>
       <div class="sidebar-foot">
         <span class="status-dot success"></span>
-        <div><strong>只在本机运行</strong><small>凭据不会进入浏览器</small></div>
+        <div><strong>本机控制平面</strong><small>凭据不会复制到其他主机</small></div>
       </div>
     </aside>
 
@@ -108,11 +110,19 @@
         <button type="button" class="segment action-mode" data-action="unarchive" aria-pressed="false">还原归档</button>
       </div>
 
+      <label class="field-label" id="targetHostLabel" for="targetHost">目标主机</label>
+      <div class="target-select-wrap" id="targetHostField">
+        <select id="targetHost"></select><span aria-hidden="true">↓</span>
+      </div>
       <label class="field-label" id="targetProviderLabel" for="targetProvider">目标 provider</label>
       <div class="target-select-wrap" id="targetProviderField">
         <select id="targetProvider"></select>
         <span aria-hidden="true">↓</span>
       </div>
+      <label class="field-stack target-cwd-field" id="targetCwdField" for="targetCwd" hidden>
+        <span>目标 Project 绝对路径</span>
+        <input id="targetCwd" autocomplete="off" spellcheck="false" placeholder="/home/user/project">
+      </label>
 
       <div class="drop-zone" id="dropZone" role="region" aria-label="Session 拖拽投放区">
         <div class="drop-icon" aria-hidden="true">⇢</div>

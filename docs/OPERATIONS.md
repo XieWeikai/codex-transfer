@@ -19,6 +19,7 @@ The CLI and Web UI call the same `MigrationEngine`; the safety, backup, audit, a
 
 ```bash
 csm status --json
+csm hosts --json
 csm sessions --provider PROVIDER --project /exact/project --status ready --json
 csm operations --limit 20 --json
 ```
@@ -43,6 +44,23 @@ csm restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
 Repeat `--session` to select multiple sessions. Batch Fork, Archive, and Unarchive execute one audited operation at a time and are not atomic; if an item fails, completed items remain and later items are not attempted.
+
+### Cross-host Fork or Move
+
+Codex Desktop must already have a passwordless SSH project connection open. Resolve the host ID with `csm hosts --json`, then use an absolute Project path that already exists on the target host:
+
+```bash
+csm fork-preview --session SESSION_ID --source-host SOURCE_HOST --target-host TARGET_HOST \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
+csm fork --session SESSION_ID --source-host SOURCE_HOST --target-host TARGET_HOST \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --acknowledge FORK --json
+
+csm move-preview --session SESSION_ID --source SOURCE_PROVIDER \
+  --source-host SOURCE_HOST --target-host TARGET_HOST \
+  --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
+```
+
+Cross-host Move creates and verifies a new target thread before archiving the source. It does not delete the source. Batches are per-session and non-atomic; use each completed operation ID for independent restore.
 
 ## Active-session detection
 

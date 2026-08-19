@@ -139,6 +139,7 @@ html[data-theme="contrast"] {
 html { min-width: 320px; scroll-padding-top: var(--header-height); }
 body { margin: 0; min-height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); }
 button, input, select { font: inherit; letter-spacing: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 button, select, input[type="checkbox"] { cursor: pointer; }
 button:disabled, select:disabled, input:disabled { cursor: not-allowed; }
 button { color: inherit; }
@@ -194,6 +195,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .sidebar-heading { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--line); color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; }
 .sidebar-heading strong { color: var(--text-secondary); }
 .provider-list { flex: 1; overflow: auto; padding: 8px; }
+.sidebar-host { display: block; margin: 10px 10px 4px; }
+.sidebar-host select { width: 100%; min-height: 38px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
+.provider-heading { margin-top: 8px; border-top: 1px solid var(--line); }
 .provider-item { width: 100%; min-height: 44px; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 9px; border-radius: var(--radius-sm); color: var(--text-secondary); text-align: left; transition: background-color 140ms ease, color 140ms ease; }
 .provider-item:hover { background: var(--surface-hover); color: var(--text); }
 .provider-item.active { background: var(--surface-active); color: var(--text); }
@@ -276,10 +280,10 @@ input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var
 .empty-state strong { color: var(--text-secondary); }
 .empty-state p { margin: 6px 0 0; font-size: 12px; }
 
-.transfer-panel { min-width: 0; display: flex; flex-direction: column; padding: 17px 16px 15px; border-left: 1px solid var(--line); background: var(--chrome); overflow: hidden; }
+.transfer-panel { min-width: 0; display: flex; flex-direction: column; padding: 17px 16px 15px; border-left: 1px solid var(--line); background: var(--chrome); overflow-x: hidden; overflow-y: auto; }
 .panel-heading, .drawer-header, .dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .panel-heading { margin-bottom: 19px; }
-.action-switch { width: 100%; margin: -7px 0 14px; }
+.action-switch { width: 100%; display: grid; grid-template-columns: 1fr 1fr; margin: -7px 0 14px; }
 .action-switch .segment { flex: 1; }
 .panel-kicker { display: block; margin-bottom: 4px; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0; }
 .text-button { min-height: 44px; padding: 0 4px; color: var(--text-muted); font-size: 12px; }
@@ -287,6 +291,9 @@ input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var
 .field-label { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 .target-select-wrap { min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); }
 .target-select-wrap > span { color: var(--accent); font-family: var(--font-mono); }
+#targetProviderLabel { margin-top: 10px; }
+.target-cwd-field { margin-top: 10px; }
+.target-cwd-field input { width: 100%; min-height: 42px; margin-top: 6px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
 .drop-zone { min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 12px 0 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); color: var(--text-muted); background: var(--drop-bg); text-align: center; transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease; }
 .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: var(--drop-hover); color: var(--text-secondary); }
 .drop-zone.drag-over { box-shadow: inset 0 0 0 1px var(--accent); }

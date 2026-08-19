@@ -1,10 +1,12 @@
 const token = document.body.dataset.token;
 const state = {
   sessions: [],
+  hosts: [],
   providers: [],
   operations: [],
   selected: new Set(),
   activeProvider: null,
+  activeHost: "local",
   filter: "all",
   action: "fork",
   plan: null,
@@ -18,6 +20,7 @@ const state = {
   popoverPinned: false,
   popoverHideTimer: null,
   popoverLoadTimer: null,
+  refreshTimer: null,
 };
 
 const providerColors = ["#86d39a", "#e7b85c", "#7bb7d7", "#c797d8", "#dc8d69", "#a8c66c"];
@@ -93,7 +96,7 @@ function prepareSession(session) {
 }
 
 function selectedSessions() {
-  return state.sessions.filter(session => state.selected.has(session.id));
+  return state.sessions.filter(session => session.host_id === state.activeHost && state.selected.has(session.id));
 }
 
 function selectedSource() {
@@ -104,8 +107,14 @@ function isArchiveAction() {
   return state.action === "archive" || state.action === "unarchive";
 }
 
+function isCrossHost() {
+  return !isArchiveAction() && Boolean($("#targetHost")?.value)
+    && (state.activeHost !== "local" || $("#targetHost").value !== "local");
+}
+
 function sessionSelectable(session) {
   if (session.locked) return false;
+  if (isArchiveAction() && session.host_id !== "local") return false;
   if (state.action === "archive") return !session.archived;
   if (state.action === "unarchive") return session.archived;
   return !session.archived;
@@ -121,9 +130,11 @@ async function load() {
     const workspace = await api("/api/workspace");
     const status = workspace.status;
     state.sessions = workspace.sessions.map(prepareSession);
-    state.providers = status.providers;
+    state.hosts = workspace.hosts || [{id: "local", label: "This Mac", kind: "local", connected: true, providers: status.providers}];
+    if (!state.hosts.some(host => host.id === state.activeHost && host.connected)) state.activeHost = "local";
+    state.providers = (state.hosts.find(host => host.id === state.activeHost)?.providers || status.providers);
     state.operations = workspace.operations;
-    if (!state.activeProvider || !state.sessions.some(session => session.provider === state.activeProvider)) {
+    if (!state.activeProvider || !state.sessions.some(session => session.host_id === state.activeHost && session.provider === state.activeProvider)) {
       state.activeProvider = observedProviders()[0] || null;
     }
     $("#homePath").textContent = `${status.codex_home}  ·  backups ${status.data_dir}`;
@@ -136,6 +147,10 @@ async function load() {
     $("#auditHealth").innerHTML = `<span></span><strong>${status.audit_chain_valid ? "审计哈希链完整" : "审计哈希链异常"}</strong>`;
     $("#operationCount").textContent = state.operations.length;
     renderAll();
+    clearTimeout(state.refreshTimer);
+    if (state.hosts.some(host => host.loading)) {
+      state.refreshTimer = setTimeout(pollHosts, 1200);
+    }
   } catch (error) {
     $("#health").className = "health-pill bad";
     $("#health").innerHTML = "<span></span><strong>连接失败</strong>";
@@ -143,9 +158,28 @@ async function load() {
   }
 }
 
+async function pollHosts() {
+  try {
+    const snapshot = await api("/api/hosts");
+    if (!snapshot.ready) {
+      state.refreshTimer = setTimeout(pollHosts, 1200);
+      return;
+    }
+    state.hosts = snapshot.hosts;
+    state.sessions = [
+      ...state.sessions.filter(session => session.host_id === "local"),
+      ...snapshot.sessions.filter(session => session.host_id !== "local").map(prepareSession),
+    ];
+    state.providers = state.hosts.find(host => host.id === state.activeHost)?.providers || [];
+    renderAll();
+  } catch (_error) {
+    state.refreshTimer = setTimeout(pollHosts, 2500);
+  }
+}
+
 function observedProviders() {
   const counts = new Map();
-  state.sessions.forEach(session => counts.set(session.provider, (counts.get(session.provider) || 0) + 1));
+  state.sessions.filter(session => session.host_id === state.activeHost).forEach(session => counts.set(session.provider, (counts.get(session.provider) || 0) + 1));
   return [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || a.localeCompare(b));
 }
 
@@ -160,7 +194,7 @@ function renderProjects() {
   const current = select.value;
   const counts = new Map();
   state.sessions
-    .filter(session => !state.activeProvider || session.provider === state.activeProvider)
+    .filter(session => session.host_id === state.activeHost && (!state.activeProvider || session.provider === state.activeProvider))
     .forEach(session => counts.set(session.cwd || "", (counts.get(session.cwd || "") || 0) + 1));
   const projects = [...counts.keys()].sort((a, b) => projectLabel(a).localeCompare(projectLabel(b), "zh-CN"));
   const labelCounts = new Map();
@@ -177,12 +211,25 @@ function renderProjects() {
 
 function renderAll() {
   renderActionMode();
+  renderHosts();
   renderProviders();
   renderProjects();
   renderTargets();
   renderSessions();
   renderQueue();
   renderOperations();
+}
+
+function renderHosts() {
+  const source = $("#sourceHost");
+  source.innerHTML = state.hosts.map(host => {
+    const disabled = !host.connected || host.loading;
+    const suffix = host.loading ? " · 正在读取" : host.connected ? "" : " · unavailable";
+    return `<option value="${escapeHtml(host.id)}" ${disabled ? "disabled" : ""}>${escapeHtml(host.label)}${suffix}</option>`;
+  }).join("");
+  source.value = state.activeHost;
+  const current = state.hosts.find(host => host.id === state.activeHost);
+  $("#hostState").textContent = current?.kind === "local" ? "LOCAL" : "SSH";
 }
 
 function renderActionMode() {
@@ -213,6 +260,9 @@ function renderActionMode() {
         : "移动会改写原会话归属；执行前会完整备份并要求确认。";
   $("#targetProviderLabel").hidden = isArchiveAction();
   $("#targetProviderField").hidden = isArchiveAction();
+  $("#targetHostLabel").hidden = isArchiveAction();
+  $("#targetHostField").hidden = isArchiveAction();
+  $("#targetCwdField").hidden = !isCrossHost();
   $("#selectAll").disabled = false;
   $("#selectAll").closest("label").title = "选择当前筛选结果中的可操作 Session";
 }
@@ -221,7 +271,7 @@ function renderProviders() {
   const providers = observedProviders();
   $("#providerCount").textContent = providers.length;
   $("#providerList").innerHTML = providers.map(provider => {
-    const count = state.sessions.filter(session => session.provider === provider).length;
+    const count = state.sessions.filter(session => session.host_id === state.activeHost && session.provider === provider).length;
     const active = provider === state.activeProvider;
     return `<button type="button" class="provider-item ${active ? "active" : ""}" data-provider="${escapeHtml(provider)}" aria-pressed="${active}">
       <span class="provider-dot" style="--provider-color:${providerColor(provider)}"></span>
@@ -242,19 +292,32 @@ function renderTargets() {
     $("#targetProvider").innerHTML = "";
     return;
   }
+  const hostSelect = $("#targetHost");
+  const previousHost = hostSelect.value;
+  const availableHosts = state.hosts.filter(host => host.connected && !host.loading && (state.activeHost === "local" || host.id !== state.activeHost));
+  hostSelect.innerHTML = availableHosts.map(host =>
+    `<option value="${escapeHtml(host.id)}">${escapeHtml(host.label)}</option>`
+  ).join("");
+  hostSelect.value = availableHosts.some(host => host.id === previousHost)
+    ? previousHost
+    : (availableHosts[0]?.id || "");
+  const targetHost = state.hosts.find(host => host.id === hostSelect.value);
   const source = selectedSource() || state.activeProvider;
   const current = $("#targetProvider").value;
-  const options = state.providers.filter(provider => provider !== source);
+  const options = (targetHost?.providers || []).filter(provider => hostSelect.value !== state.activeHost || provider !== source);
   $("#targetProvider").innerHTML = options.map(provider =>
     `<option value="${escapeHtml(provider)}">${escapeHtml(provider)}</option>`
   ).join("");
   if (options.includes(current)) $("#targetProvider").value = current;
+  $("#targetCwdField").hidden = !isCrossHost();
+  if (isCrossHost() && !$("#targetCwd").value) $("#targetCwd").value = selectedSessions()[0]?.cwd || "";
 }
 
 function visibleSessions() {
   const query = $("#search").value.trim().toLocaleLowerCase();
   const project = $("#projectFilter").value;
   const sessions = state.sessions.filter(session => {
+    if (session.host_id !== state.activeHost) return false;
     if (state.activeProvider && session.provider !== state.activeProvider) return false;
     if (project !== "__all__" && session.cwd !== project) return false;
     if (state.filter === "ready" && (session.locked || session.archived)) return false;
@@ -302,7 +365,7 @@ function renderSessions() {
 
   $$(".session-card").forEach(card => {
     const id = card.dataset.id;
-    const session = state.sessions.find(item => item.id === id);
+    const session = state.sessions.find(item => item.host_id === state.activeHost && item.id === id);
     card.querySelector("input")?.addEventListener("change", event => setSessionSelected(id, event.target.checked));
     card.querySelector(".info-button")?.addEventListener("click", event => {
       const shouldClose = state.popoverPinned && state.popoverSessionId === id;
@@ -348,6 +411,7 @@ function showSessionPopover(card, session, pinned) {
   $("#sessionPopoverContent").innerHTML = `
     <dl class="popover-details">
       <div><dt>Session ID</dt><dd>${escapeHtml(session.id)}</dd></div>
+      <div><dt>Host</dt><dd>${escapeHtml(session.host_id)}</dd></div>
       <div><dt>Provider</dt><dd>${escapeHtml(session.provider)}</dd></div>
       <div><dt>Model</dt><dd>${escapeHtml(session.model || "unknown")}</dd></div>
       <div><dt>Project</dt><dd>${escapeHtml(session.cwd || "无工作目录")}</dd></div>
@@ -371,6 +435,11 @@ function showSessionPopover(card, session, pinned) {
 }
 
 async function loadFullSessionTitle(session) {
+  if (session.host_id !== "local") {
+    const title = $("#sessionPopoverTitle");
+    if (title) title.textContent = `${session.title}（远端清单摘要）`;
+    return;
+  }
   session.titlePromise ||= api(`/api/sessions/${encodeURIComponent(session.id)}`);
   try {
     const detail = await session.titlePromise;
@@ -564,11 +633,13 @@ function clearDragVisuals(drag) {
 }
 
 function setSessionSelected(id, selected) {
-  const session = state.sessions.find(item => item.id === id);
+  const session = state.sessions.find(item => item.host_id === state.activeHost && item.id === id);
   if (!session || !sessionSelectable(session)) {
     const message = session?.locked
       ? "正在使用的 Session 必须先关闭后才能操作。"
-      : state.action === "archive" ? "这个 Session 已经归档。" : "这个 Session 当前没有归档。";
+      : isArchiveAction() && session?.host_id !== "local"
+        ? "远程 Session 当前只支持 Fork 或移动；归档仍限定本机。"
+        : state.action === "archive" ? "这个 Session 已经归档。" : "这个 Session 当前没有归档。";
     toast(message, true);
     return;
   }
@@ -611,11 +682,13 @@ function renderQueue() {
   $("#selectedCount").textContent = sessions.length;
   $("#sourceSummary").textContent = isArchiveAction()
     ? `${new Set(sessions.map(session => session.provider)).size} 个 Provider`
-    : sessions[0]?.provider || "尚未选择";
+    : sessions[0] ? `${state.activeHost} · ${sessions[0].provider}` : "尚未选择";
   $("#backupSummary").textContent = state.plan
     ? formatBytes(state.plan.estimated_backup_bytes)
     : sessions.length ? `至少 ${formatBytes(sessions.reduce((sum, session) => sum + session.size_bytes, 0))}` : "—";
-  $("#previewButton").disabled = sessions.length === 0 || (!isArchiveAction() && !$("#targetProvider").value);
+  $("#previewButton").disabled = sessions.length === 0
+    || (!isArchiveAction() && !$("#targetProvider").value)
+    || (isCrossHost() && !$("#targetCwd").value.trim());
   $("#transferQueue").innerHTML = sessions.length ? sessions.map(session => `
     <div class="queue-item"><span></span><div><strong>${escapeHtml(session.displayTitle)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.displayTitle)}">×</button></div>
   `).join("") : '<div class="queue-empty">队列为空<br>拖入或点击卡片开始</div>';
@@ -625,11 +698,13 @@ function renderQueue() {
 function renderOperations() {
   $("#operationCount").textContent = state.operations.length;
   $("#operations").innerHTML = state.operations.length ? state.operations.map(operation => {
-    const canRestore = ["migration", "fork"].includes(operation.kind) && operation.status === "completed" && !operation.restored_by;
+    const canRestore = ["migration", "fork", "cross_host_fork", "cross_host_move"].includes(operation.kind) && operation.status === "completed" && !operation.restored_by;
     const route = operation.kind === "migration"
       ? `${escapeHtml(operation.source_provider)} → ${escapeHtml(operation.target_provider)}`
       : operation.kind === "fork"
         ? `${escapeHtml(operation.source_provider)} ↗ ${escapeHtml(operation.target_provider)} · Fork`
+        : operation.kind === "cross_host_fork" || operation.kind === "cross_host_move"
+          ? `${escapeHtml(operation.source_host)} → ${escapeHtml(operation.target_host)} · ${operation.kind.endsWith("fork") ? "Fork" : "Move"}`
         : operation.kind === "archive"
           ? "归档 Session"
           : operation.kind === "unarchive"
@@ -663,8 +738,8 @@ async function openMigrationDialog() {
   $("#actionAckCode").textContent = acknowledgement;
   $("#migrateAck").placeholder = acknowledgement;
   $("#migrateButton").textContent = `创建备份并${label}`;
-  $("#dialogSource").textContent = isArchiveAction() ? `${sessions.length} 个 Session` : sessions[0].provider;
-  $("#dialogTarget").textContent = archive ? "已归档" : unarchive ? "活动列表" : target;
+  $("#dialogSource").textContent = isArchiveAction() ? `${sessions.length} 个 Session` : `${state.activeHost} · ${sessions[0].provider}`;
+  $("#dialogTarget").textContent = archive ? "已归档" : unarchive ? "活动列表" : `${$("#targetHost").value} · ${target}`;
   $("#dialogCount").textContent = sessions.length;
   $("#riskList").innerHTML = "";
   $("#preflightStatus").className = "preflight-status";
@@ -674,9 +749,11 @@ async function openMigrationDialog() {
   $("#migrateButton").disabled = true;
   dialog.showModal();
   try {
-    const previewPath = isArchiveAction() ? "/api/archive/preview" : fork ? "/api/forks/preview" : "/api/preview";
+    const previewPath = isArchiveAction() ? "/api/archive/preview" : isCrossHost() ? "/api/transfer/preview" : fork ? "/api/forks/preview" : "/api/preview";
     const payload = isArchiveAction()
       ? {session_ids: sessions.map(session => session.id), archived: archive}
+      : isCrossHost()
+        ? {session_ids: sessions.map(session => session.id), source_host: state.activeHost, target_host: $("#targetHost").value, target_provider: target, target_cwd: $("#targetCwd").value, move: !fork}
       : fork
         ? {session_ids: sessions.map(session => session.id), target_provider: target}
         : {session_ids: sessions.map(session => session.id), source_provider: sessions[0].provider, target_provider: target};
@@ -730,6 +807,27 @@ async function migrate() {
         state.selected.clear();
         toast(`已完成 ${result.completed.length} 条${archived ? "归档" : "还原归档"}；每条均已独立备份并审计。`);
       }
+      return;
+    }
+    if (isCrossHost()) {
+      const result = await api("/api/transfer", {
+        method: "POST",
+        body: JSON.stringify({
+          session_ids: sessions.map(session => session.id),
+          source_host: state.activeHost,
+          target_host: $("#targetHost").value,
+          target_provider: $("#targetProvider").value,
+          target_cwd: $("#targetCwd").value,
+          move: !fork,
+          acknowledgement: $("#migrateAck").value,
+        }),
+      });
+      $("#migrationDialog").close();
+      state.selected.clear();
+      state.plan = null;
+      await load();
+      if (result.failed) toast(`跨主机操作完成 ${result.completed.length}/${sessions.length}；失败于 ${result.failed.session_id}：${result.failed.error}`, true);
+      else toast(`已完成 ${result.completed.length} 条跨主机${fork ? " Fork" : "移动"}，均已备份并审计。`);
       return;
     }
     if (fork) {
@@ -863,6 +961,22 @@ function setupEvents() {
   $("#projectFilter").addEventListener("change", event => { event.target.title = event.target.value === "__all__" ? "全部 Project" : event.target.value || "无 Project"; renderSessions(); });
   $("#sortSessions").addEventListener("change", renderSessions);
   $("#targetProvider").addEventListener("change", () => { state.plan = null; renderQueue(); });
+  $("#sourceHost").addEventListener("change", event => {
+    state.activeHost = event.target.value;
+    state.providers = state.hosts.find(host => host.id === state.activeHost)?.providers || [];
+    state.activeProvider = observedProviders()[0] || null;
+    state.selected.clear();
+    state.plan = null;
+    $("#targetCwd").value = "";
+    renderAll();
+  });
+  $("#targetHost").addEventListener("change", () => {
+    state.plan = null;
+    $("#targetCwd").value = isCrossHost() ? (selectedSessions()[0]?.cwd || "") : "";
+    renderTargets();
+    renderQueue();
+  });
+  $("#targetCwd").addEventListener("input", () => { state.plan = null; renderQueue(); });
   $("#clearSelection").addEventListener("click", () => {
     const selectedIds = [...state.selected];
     state.selected.clear();

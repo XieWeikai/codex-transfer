@@ -66,6 +66,46 @@ class AuditStore:
             "size_bytes": destination.stat().st_size,
         }
 
+    def backup_bytes(
+        self, operation_dir: Path, payload: bytes, logical_name: str, source: str
+    ) -> dict[str, Any]:
+        destination = operation_dir / "files" / logical_name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(destination, 0o600)
+        return {
+            "source": source,
+            "backup": str(destination.relative_to(operation_dir)),
+            "before_sha256": sha256_file(destination),
+            "size_bytes": len(payload),
+        }
+
+    def store_database_snapshot(
+        self,
+        operation_dir: Path,
+        payload: bytes,
+        index: int,
+        source: str,
+        host_id: str,
+    ) -> dict[str, Any]:
+        safe_host = "".join(char if char.isalnum() or char in "._-" else "_" for char in host_id)
+        destination = operation_dir / "databases" / f"{safe_host[:128]}-state-{index}.sqlite"
+        with destination.open("wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(destination, 0o600)
+        return {
+            "host_id": host_id,
+            "source": source,
+            "backup": str(destination.relative_to(operation_dir)),
+            "before_sha256": sha256_database(destination),
+            "size_bytes": len(payload),
+        }
+
     def backup_database(self, operation_dir: Path, source: Path, index: int) -> dict[str, Any]:
         destination = operation_dir / "databases" / f"state-{index}.sqlite"
         with closing(sqlite3.connect(source)) as source_conn, closing(
