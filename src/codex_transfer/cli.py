@@ -157,6 +157,9 @@ def parser() -> argparse.ArgumentParser:
         command_parser.add_argument(
             "--session", action="append", required=True, dest="session_ids"
         )
+        command_parser.add_argument(
+            "--host", default="local", help="Host ID returned by the hosts command"
+        )
         if not preview:
             command_parser.add_argument(
                 "--acknowledge",
@@ -335,10 +338,12 @@ def execute_command(args: argparse.Namespace, engine: MigrationEngine) -> tuple[
             args.acknowledge,
         ), 0
     if args.command in {"archive-preview", "unarchive-preview"}:
-        return engine.preview_archive(args.session_ids, args.command == "archive-preview"), 0
+        return engine.preview_archive(
+            args.session_ids, args.command == "archive-preview", args.host
+        ), 0
     if args.command in {"archive", "unarchive"}:
         result = engine.set_archived_batch(
-            args.session_ids, args.command == "archive", args.acknowledge
+            args.session_ids, args.command == "archive", args.acknowledge, args.host
         )
         return result, int(result["failed"] is not None)
     if args.command == "restore-preview":

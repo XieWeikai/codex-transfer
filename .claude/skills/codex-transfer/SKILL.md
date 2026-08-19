@@ -129,9 +129,12 @@ codex-transfer archive --session SESSION_ID --acknowledge ARCHIVE --json
 
 codex-transfer unarchive-preview --session SESSION_ID --json
 codex-transfer unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+
+codex-transfer archive-preview --host HOST_ID --session SESSION_ID --json
+codex-transfer archive --host HOST_ID --session SESSION_ID --acknowledge ARCHIVE --json
 ```
 
-Repeat `--session` for multiple sessions. Archive batches are not atomic: report `completed` and `failed` precisely and do not retry completed items. Codex may move the rollout while changing archive state; never move it manually or update the SQLite `archived` field directly.
+Use a host ID returned by `hosts` for a Desktop-connected SSH session; omit `--host` for local. Repeat `--session` for multiple sessions. Archive batches are not atomic: report `completed` and `failed` precisely and do not retry completed items. Codex may move the rollout while changing archive state; never move it manually or update the SQLite `archived` field directly.
 
 ## Verify and report
 

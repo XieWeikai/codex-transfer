@@ -41,6 +41,9 @@ ct archive --session SESSION_ID --acknowledge ARCHIVE --json
 ct unarchive-preview --session SESSION_ID --json
 ct unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
 
+ct archive-preview --host G1 --session SESSION_ID --json
+ct archive --host G1 --session SESSION_ID --acknowledge ARCHIVE --json
+
 ct restore-preview --operation OPERATION_ID --json
 ct restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
@@ -92,11 +95,11 @@ Move rewrites the original rollout and index. Restoration is available only whil
 
 ## Archive workflow
 
-1. Stop every selected Codex task and choose Archive or Unarchive in the workbench.
+1. Stop the Codex task, select its local or SSH host, and use the Archive/Unarchive icon on its card.
 2. Review the current-state and writer-lock preflight.
 3. Confirm with `ARCHIVE` or `UNARCHIVE`.
-4. Codex Transfer backs up the rollout and a consistent SQLite snapshot for each session.
-5. Codex Transfer invokes the official `thread/archive` or `thread/unarchive` app-server method and verifies the resulting indexed state.
+4. Codex Transfer stores the selected host's rollout and a consistent SQLite snapshot in the local audit directory.
+5. Codex Transfer invokes the selected host's official `thread/archive` or `thread/unarchive` app-server method and verifies the resulting indexed state.
 
 Archive changes default-list visibility and may move the rollout under Codex's archive storage. It does not delete history or change Provider. Batch operations are intentionally per-session so each completed item has an independent recovery authority.
 

@@ -287,7 +287,13 @@ class MigrationEngine:
             )
         return plan
 
-    def preview_archive(self, session_ids: list[str], archived: bool) -> dict[str, Any]:
+    def preview_archive(
+        self, session_ids: list[str], archived: bool, host_id: str = "local"
+    ) -> dict[str, Any]:
+        if host_id != "local":
+            if self.fleet is None:
+                raise MigrationError("Remote archive support is unavailable")
+            return self.fleet.preview_archive(session_ids, host_id, archived)
         if not isinstance(archived, bool):
             raise MigrationError("archived must be a JSON boolean")
         if not session_ids:
@@ -485,8 +491,18 @@ class MigrationEngine:
                 raise MigrationError(f"{kind.title()} failed and was rolled back: {exc}") from exc
 
     def set_archived_batch(
-        self, session_ids: list[str], archived: bool, acknowledgement: str
+        self,
+        session_ids: list[str],
+        archived: bool,
+        acknowledgement: str,
+        host_id: str = "local",
     ) -> dict[str, Any]:
+        if host_id != "local":
+            if self.fleet is None:
+                raise MigrationError("Remote archive support is unavailable")
+            return self.fleet.set_archived_batch(
+                session_ids, host_id, archived, acknowledgement
+            )
         plan = self.preview_archive(session_ids, archived)
         if not plan["executable"]:
             raise MigrationError("Preflight has critical risks; archive batch was not started")

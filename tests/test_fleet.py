@@ -165,6 +165,37 @@ class FleetTest(unittest.TestCase):
         self.assertFalse(self.source.sessions()[0].archived)
         self.assertEqual(self.target.sessions(), [])
 
+    def test_remote_archive_and_unarchive_are_backed_up_and_audited(self):
+        plan = self.fleet.preview_archive(["session-1"], "source-host", True)
+        self.assertTrue(plan["executable"])
+        self.assertEqual(plan["host_id"], "source-host")
+        self.assertGreater(plan["estimated_backup_bytes"], 0)
+
+        archived = self.fleet.set_archived_batch(
+            ["session-1"], "source-host", True, "ARCHIVE"
+        )
+        self.assertIsNone(archived["failed"])
+        self.assertTrue(self.source.sessions()[0].archived)
+        archive_manifest = self.fleet.audit.read_manifest(
+            archived["completed"][0]["operation_id"]
+        )
+        self.assertEqual(archive_manifest["host_id"], "source-host")
+        self.assertTrue(archive_manifest["files"])
+        self.assertTrue(archive_manifest["post_files"])
+
+        unarchived = self.fleet.set_archived_batch(
+            ["session-1", "session-1"], "source-host", False, "UNARCHIVE"
+        )
+        self.assertIsNone(unarchived["failed"])
+        self.assertEqual(len(unarchived["completed"]), 1)
+        self.assertFalse(self.source.sessions()[0].archived)
+        self.assertEqual(
+            self.fleet.audit.read_manifest(
+                unarchived["completed"][0]["operation_id"]
+            )["kind"],
+            "unarchive",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

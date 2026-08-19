@@ -29,7 +29,7 @@ Moving a Codex session is not a file rename. Current Codex discovery uses both r
 | Cross-host transfer | Fork from host A/provider A into host B/provider B and optionally archive the verified source as a reversible Move. |
 | Safe Fork | Ask the official Codex app-server `thread/fork` interface to create a new durable thread under another provider. |
 | Audited Move | Update the original rollout and SQLite index only after preflight and explicit confirmation. |
-| Archive control | Archive or unarchive sessions through Codex app-server with per-session backup and audit records. |
+| Archive control | Archive or unarchive local and Desktop-connected SSH sessions from each card, with per-session backup and audit records. |
 | Contextual risk review | Show credential, encrypted-content, writer-lock, provenance, and recovery risks at the point of action. |
 | Backup generations | Preserve rollout files, consistent SQLite snapshots, manifests, and SHA-256 values for every write. |
 | Conflict-aware recovery | Refuse automatic restore or fork removal when later conversation data would be overwritten. |
@@ -49,7 +49,7 @@ Codex home
 - **Move** changes `session_meta.payload.model_provider` in the rollout and `threads.model_provider` in SQLite.
 - **Cross-host Fork** stages an audited rollout copy on the target and asks its isolated Codex app-server to import it through experimental `thread/fork.path`.
 - **Cross-host Move** creates and verifies a new target Session ID, then archives rather than deletes the source.
-- **Archive / Unarchive** use Codex app-server `thread/archive` and `thread/unarchive`; they change visibility, not history or Provider.
+- **Archive / Unarchive** use Codex app-server `thread/archive` and `thread/unarchive` on the selected local or remote host; they change visibility, not history or Provider.
 - **Restore** is a new audited operation. It proceeds only when current hashes still match the recorded post-state.
 
 Credentials, API keys, OAuth state, provider definitions, base URLs, and model aliases are never copied or stored by Codex Transfer.
@@ -135,6 +135,10 @@ ct archive-preview --session SESSION_ID --json
 ct archive --session SESSION_ID --acknowledge ARCHIVE --json
 ct unarchive-preview --session SESSION_ID --json
 ct unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+
+# A Desktop-connected SSH host
+ct archive-preview --host G1 --session SESSION_ID --json
+ct archive --host G1 --session SESSION_ID --acknowledge ARCHIVE --json
 
 ct restore-preview --operation OPERATION_ID --json
 ct restore --operation OPERATION_ID --acknowledge RESTORE --json

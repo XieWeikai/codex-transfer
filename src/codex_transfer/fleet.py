@@ -591,6 +591,236 @@ class HostFleet:
             self._cache = (time.monotonic(), result)
         return result
 
+    def preview_archive(
+        self, session_ids: list[str], host_id: str, archived: bool
+    ) -> dict[str, Any]:
+        if not isinstance(archived, bool):
+            raise FleetError("archived must be a JSON boolean")
+        if not session_ids:
+            raise FleetError("Select at least one session")
+        host = self._host(host_id)
+        indexed = {session.id: session for session in host.sessions()}
+        unique_ids = list(dict.fromkeys(session_ids))
+        missing = [session_id for session_id in unique_ids if session_id not in indexed]
+        if missing:
+            raise FleetError("Unknown sessions on host " + host_id + ": " + ", ".join(missing))
+        sessions = [indexed[session_id] for session_id in unique_ids]
+        risks: list[Risk] = []
+        estimated = 0
+
+        for session in sessions:
+            if session.archived == archived:
+                risks.append(
+                    Risk(
+                        "critical",
+                        "archive-state-changed",
+                        f"会话 {session.id} 已经是{'已归档' if archived else '未归档'}状态。",
+                        "刷新列表，只选择状态与本次操作匹配的会话。",
+                    )
+                )
+            if session.locked:
+                risks.append(
+                    Risk(
+                        "critical",
+                        "session-active",
+                        f"会话 {session.id} 正被主机 {host_id} 上的 Codex 写入。",
+                        "关闭或停止该远程 Codex 任务，然后重新运行预检。",
+                    )
+                )
+            try:
+                estimated += len(host.fetch_rollout(session.rollout_path))
+            except Exception as exc:
+                risks.append(
+                    Risk(
+                        "critical",
+                        "rollout-missing",
+                        f"主机 {host_id} 上会话 {session.id} 的 rollout 无法读取：{exc}",
+                        "先在远程主机修复文件或从可信备份恢复，再重试。",
+                    )
+                )
+
+        integrity = host.integrity_check()
+        if integrity != "ok":
+            risks.append(
+                Risk(
+                    "critical",
+                    "database-integrity",
+                    f"主机 {host_id} 的 Codex SQLite 完整性检查失败：{integrity}",
+                    "修复远程数据库后再改变归档状态。",
+                )
+            )
+        risks.append(
+            Risk(
+                "warning" if archived else "info",
+                "archive-hides-session" if archived else "unarchive-preserves-session",
+                "归档会让 Session 从远程 Codex 的默认活动列表隐藏，但不会删除聊天记录。"
+                if archived
+                else "还原归档只恢复远程 Session 的可见状态，不会改变 Provider 或聊天内容。",
+                "需要继续使用时可在同一张卡片上还原归档；操作前会保存远程 rollout 和数据库快照。"
+                if archived
+                else "操作后刷新 Codex Desktop；若仍未显示，请检查远程 Project 筛选。",
+            )
+        )
+        if len(sessions) > 1:
+            risks.append(
+                Risk(
+                    "warning",
+                    "archive-batch-non-atomic",
+                    "批量远程归档操作逐条执行，每条都有独立备份和审计记录，但整批不是原子事务。",
+                    "中途失败时保留已完成条目，并按操作记录逐条核对。",
+                )
+            )
+        return {
+            "host_id": host_id,
+            "archived": archived,
+            "sessions": [session.to_summary_dict() for session in sessions],
+            "risks": [risk.to_dict() for risk in risks],
+            "estimated_backup_bytes": estimated,
+            "executable": bool(sessions)
+            and not any(risk.severity == "critical" for risk in risks),
+        }
+
+    def set_archived_batch(
+        self,
+        session_ids: list[str],
+        host_id: str,
+        archived: bool,
+        acknowledgement: str,
+    ) -> dict[str, Any]:
+        expected = "ARCHIVE" if archived else "UNARCHIVE"
+        if acknowledgement != expected:
+            raise FleetError(f"Risk acknowledgement must equal {expected}")
+        completed = []
+        failed = None
+        with self._exclusive_lock():
+            plan = self.preview_archive(session_ids, host_id, archived)
+            if not plan["executable"]:
+                raise FleetError("Preflight has critical risks; remote archive batch was not started")
+            for session in plan["sessions"]:
+                session_id = session["id"]
+                try:
+                    completed.append(
+                        self._set_archived_one(
+                            session_id, host_id, archived, plan["risks"]
+                        )
+                    )
+                except Exception as exc:
+                    failed = {"session_id": session_id, "error": str(exc)}
+                    break
+        with self._cache_lock:
+            self._cache = None
+        return {
+            "requested_session_ids": session_ids,
+            "host_id": host_id,
+            "archived": archived,
+            "completed": completed,
+            "failed": failed,
+            "batch_atomic": False,
+        }
+
+    def _set_archived_one(
+        self,
+        session_id: str,
+        host_id: str,
+        archived: bool,
+        risks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        host = self._host(host_id)
+        source = {session.id: session for session in host.sessions()}.get(session_id)
+        if source is None or source.locked or source.archived == archived:
+            raise FleetError("Remote session changed after preflight")
+        kind = "archive" if archived else "unarchive"
+        operation_id, operation_dir = self.audit.new_operation(kind)
+        manifest = {
+            "operation_id": operation_id,
+            "kind": kind,
+            "status": "preparing",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "host_id": host_id,
+            "session_ids": [source.id],
+            "archived_before": source.archived,
+            "archived_after": archived,
+            "files": [],
+            "post_files": [],
+            "databases": [],
+            "risks": risks,
+        }
+        self.audit.write_manifest(operation_dir, manifest)
+        changed = False
+        try:
+            payload = host.fetch_rollout(source.rollout_path)
+            file_entry = self.audit.backup_bytes(
+                operation_dir,
+                payload,
+                f"rollout/{host_id}-{source.id}.jsonl",
+                f"{host_id}:{source.rollout_path}",
+            )
+            file_entry.update({"host_id": host_id, "session_id": source.id})
+            manifest["files"].append(file_entry)
+            manifest["databases"].extend(
+                host.backup_databases(self.audit, operation_dir, 0)
+            )
+            manifest["status"] = "backed_up"
+            self.audit.write_manifest(operation_dir, manifest)
+            self.audit.append_event(operation_id, kind, "backed_up", {"host_id": host_id})
+
+            host.set_archived(source.id, archived)
+            changed = True
+            refreshed = {session.id: session for session in host.sessions()}.get(source.id)
+            if refreshed is None or refreshed.archived != archived:
+                raise FleetError("Remote Codex did not apply the requested archive state")
+            refreshed_payload = host.fetch_rollout(refreshed.rollout_path)
+            manifest["post_files"] = [
+                {
+                    "host_id": host_id,
+                    "session_id": refreshed.id,
+                    "source": refreshed.rollout_path,
+                    "after_sha256": hashlib.sha256(refreshed_payload).hexdigest(),
+                    "size_bytes": len(refreshed_payload),
+                }
+            ]
+            manifest["status"] = "completed"
+            manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
+            self.audit.write_manifest(operation_dir, manifest)
+            self.audit.append_event(
+                operation_id,
+                kind,
+                "completed",
+                {"host_id": host_id, "session": source.id, "archived": archived},
+            )
+            return manifest
+        except Exception as exc:
+            rollback_error = None
+            with contextlib.suppress(Exception):
+                current = {session.id: session for session in host.sessions()}.get(source.id)
+                changed = current is not None and current.archived != source.archived
+            if changed:
+                try:
+                    host.set_archived(source.id, source.archived)
+                    rolled_back = {session.id: session for session in host.sessions()}.get(source.id)
+                    if rolled_back is None or rolled_back.archived != source.archived:
+                        raise FleetError("Remote Codex did not restore the original archive state")
+                except Exception as rollback_exc:
+                    rollback_error = str(rollback_exc)
+            manifest["status"] = "rollback_failed" if rollback_error else "rolled_back"
+            manifest["error"] = str(exc)
+            if rollback_error:
+                manifest["rollback_error"] = rollback_error
+            manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
+            self.audit.write_manifest(operation_dir, manifest)
+            self.audit.append_event(
+                operation_id,
+                kind,
+                manifest["status"],
+                {"host_id": host_id, "error": str(exc), "rollback_error": rollback_error},
+            )
+            if rollback_error:
+                raise FleetError(
+                    f"Remote {kind} failed and rollback also failed; use backup {operation_id}: "
+                    f"{exc}; rollback: {rollback_error}"
+                ) from exc
+            raise FleetError(f"Remote {kind} failed and was rolled back: {exc}") from exc
+
     def preview_transfer(
         self,
         session_ids: list[str],

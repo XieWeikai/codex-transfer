@@ -30,7 +30,7 @@ When a fork receives a new turn, undo would delete the new branch. Codex Transfe
 
 ## Archive state
 
-Archive and Unarchive use Codex's official app-server methods. They do not delete conversation history or change Provider, but Codex may move the rollout and update its SQLite path. Codex Transfer therefore backs up both representations before every item, verifies the resulting archive bit and rollout, and records each batch item as an independent operation.
+Archive and Unarchive use Codex's official app-server methods on the selected local or Desktop-connected SSH host. They do not delete conversation history or change Provider, but Codex may move the rollout and update its SQLite path. Codex Transfer therefore stores both pre-write representations in the local audit directory before every item, verifies the resulting archive bit and rollout, and records each batch item as an independent operation.
 
 Codex refuses archive operations when another process owns the thread or a spawned descendant. Codex Transfer also checks the per-thread writer lock before starting, but an idle visible UI tab is not necessarily locked. Close the task before changing archive state to avoid racing a process that is about to resume it.
 

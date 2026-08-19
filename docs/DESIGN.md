@@ -2,13 +2,13 @@
 
 ## Goal
 
-Fork or move selected Codex sessions between `model_provider` buckets and Codex Desktop-connected hosts, and manage local archive visibility, while making every write traceable and recoverable. Credentials and provider configuration are explicitly out of scope.
+Fork or move selected Codex sessions between `model_provider` buckets and Codex Desktop-connected hosts, and manage local or remote archive visibility, while making every write traceable and recoverable. Credentials and provider configuration are explicitly out of scope.
 
 ## Cross-host boundary
 
 `DesktopSshDiscovery` reads the local process tree and accepts only `ssh` processes whose direct parent is the Codex/ChatGPT Desktop app and whose command launches `codex app-server proxy`. That discovered alias is the complete remote-host authority; HTTP and CLI callers cannot inject arbitrary SSH destinations. Each operation starts a separate remote `codex app-server --stdio`, so inventory and mutations do not share or disrupt Desktop's daemon socket.
 
-`HostFleet` owns inventory, preflight, transfer, rollback, and restore. Cross-host Fork stages a hash-verified rollout and uses Codex's experimental `thread/fork.path` request with a target Provider and cwd. Cross-host Move is verified target creation followed by source archive, never source deletion. The target receives a new thread ID and the operation remains reversible while neither side has diverged.
+`HostFleet` owns inventory, preflight, transfer, archive state, rollback, and restore. Cross-host Fork stages a hash-verified rollout and uses Codex's experimental `thread/fork.path` request with a target Provider and cwd. Cross-host Move is verified target creation followed by source archive, never source deletion. Archive and Unarchive use the same selected-host adapter, so local and remote calls share the official app-server mutation, writer-lock checks, local audit snapshots, and rollback rules.
 
 Codex's `ThreadForkParams` accepts either a thread ID or an experimental path, plus `model_provider` and `cwd`. Because the path option is explicitly unstable, version compatibility is a runtime risk rather than an invariant.
 

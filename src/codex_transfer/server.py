@@ -115,13 +115,16 @@ class CodexTransferHandler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/archive/preview":
                 result = self.server.engine.preview_archive(
-                    payload.get("session_ids", []), payload.get("archived")
+                    payload.get("session_ids", []),
+                    payload.get("archived"),
+                    payload.get("host_id", "local"),
                 )
             elif path == "/api/archive":
                 result = self.server.engine.set_archived_batch(
                     payload.get("session_ids", []),
                     payload.get("archived"),
                     payload.get("acknowledgement", ""),
+                    payload.get("host_id", "local"),
                 )
             elif path.startswith("/api/operations/") and path.endswith("/restore-preview"):
                 operation_id = path.removeprefix("/api/operations/").removesuffix(

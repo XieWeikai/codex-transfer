@@ -29,7 +29,7 @@ Codex Transfer 是一个本地 Web 工作台，用于查看 Codex Session，并�
 | 跨主机传输 | 从主机 A/provider A Fork 到主机 B/provider B；可在验证目标后归档来源，形成可逆 Move。 |
 | 安全 Fork | 调用 Codex 官方 app-server `thread/fork` 接口，在目标 Provider 下创建持久化的新 thread。 |
 | 可审计移动 | 仅在预检和明确确认后更新原 rollout 与 SQLite 索引。 |
-| 归档管理 | 通过 Codex app-server 归档或还原归档，每个 Session 都有独立备份和审计。 |
+| 归档管理 | 直接在卡片上归档或还原本机及 Desktop SSH 主机的 Session，每个 Session 都有独立备份和审计。 |
 | 上下文风险确认 | 在操作发生时展示凭据、加密内容、写入锁、来源追溯和恢复风险。 |
 | 备份代际 | 每次写操作都保存 rollout、SQLite 一致性快照、Manifest 和 SHA-256。 |
 | 分叉感知恢复 | 后续聊天可能被覆盖时，拒绝自动恢复或删除 Fork。 |
@@ -49,7 +49,7 @@ Codex home
 - **移动** 同时修改 rollout 中的 `session_meta.payload.model_provider` 和 SQLite 中的 `threads.model_provider`。
 - **跨主机 Fork** 会把经过审计的 rollout 暂存到目标端，再由隔离的 Codex app-server 通过实验性 `thread/fork.path` 导入。
 - **跨主机 Move** 先创建并验证新的目标 Session ID，随后归档而不是删除来源。
-- **归档 / 还原归档**调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。
+- **归档 / 还原归档**在所选本机或远程主机上调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。
 - **恢复** 本身也是一次新的审计操作。只有当前哈希仍与记录的操作后状态一致时才会执行。
 
 Codex Transfer 不会复制或保存 API Key、OAuth 状态、Provider 定义、Base URL、模型别名或其他凭据。
@@ -135,6 +135,10 @@ ct archive-preview --session SESSION_ID --json
 ct archive --session SESSION_ID --acknowledge ARCHIVE --json
 ct unarchive-preview --session SESSION_ID --json
 ct unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+
+# Codex Desktop 已连接的 SSH 主机
+ct archive-preview --host G1 --session SESSION_ID --json
+ct archive --host G1 --session SESSION_ID --acknowledge ARCHIVE --json
 
 ct restore-preview --operation OPERATION_ID --json
 ct restore --operation OPERATION_ID --acknowledge RESTORE --json

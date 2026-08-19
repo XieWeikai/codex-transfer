@@ -9,6 +9,8 @@ const state = {
   activeHost: "local",
   filter: "all",
   action: "fork",
+  dialogAction: null,
+  dialogSessionIds: null,
   plan: null,
   restoreId: null,
   restorePlan: null,
@@ -103,21 +105,25 @@ function selectedSource() {
   return selectedSessions()[0]?.provider || null;
 }
 
-function isArchiveAction() {
-  return state.action === "archive" || state.action === "unarchive";
+function isArchiveAction(action = state.action) {
+  return action === "archive" || action === "unarchive";
 }
 
-function isCrossHost() {
-  return !isArchiveAction() && Boolean($("#targetHost")?.value)
+function isCrossHost(action = state.action) {
+  return !isArchiveAction(action) && Boolean($("#targetHost")?.value)
     && (state.activeHost !== "local" || $("#targetHost").value !== "local");
 }
 
 function sessionSelectable(session) {
   if (session.locked) return false;
-  if (isArchiveAction() && session.host_id !== "local") return false;
-  if (state.action === "archive") return !session.archived;
-  if (state.action === "unarchive") return session.archived;
   return !session.archived;
+}
+
+function dialogSessions() {
+  if (!state.dialogSessionIds) return selectedSessions();
+  return state.sessions.filter(session =>
+    session.host_id === state.activeHost && state.dialogSessionIds.includes(session.id)
+  );
 }
 
 function providerColor(provider) {
@@ -234,34 +240,28 @@ function renderHosts() {
 
 function renderActionMode() {
   const fork = state.action === "fork";
-  const archive = state.action === "archive";
-  const unarchive = state.action === "unarchive";
   $$(".action-mode").forEach(button => {
     const active = button.dataset.action === state.action;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
-  const label = archive ? "归档" : unarchive ? "还原归档" : fork ? "Fork" : "移动";
+  const label = fork ? "Fork" : "移动";
   $("#actionKicker").textContent = `${label.toLocaleUpperCase()} QUEUE`;
   $("#actionHeading").textContent = `${label}工作区`;
   $("#dropTitle").textContent = `拖拽 Session 到这里${label}`;
-  $("#dropHint").textContent = isArchiveAction()
-    ? "支持跨 Provider 多选；每条操作独立备份和审计"
-    : fork ? "支持多选；每个 Fork 独立备份和审计" : "原会话将切换归属；点击卡片或复选框多选";
+  $("#dropHint").textContent = fork
+    ? "支持多选；每个 Fork 独立备份和审计"
+    : "原会话将切换归属；点击卡片或复选框多选";
   $("#queueLabel").textContent = `待${label}`;
   $("#selectedLabel").textContent = `条待${label}`;
   $("#previewButtonLabel").textContent = `检查并${label}`;
-  $("#actionNote").textContent = archive
-    ? "归档通过 Codex 官方 app-server 隐藏 Session，不删除聊天记录。"
-    : unarchive
-      ? "还原归档通过官方 app-server 恢复可见状态，不改 Provider。"
-      : fork
-        ? "Fork 通过 Codex 官方 app-server 创建，并保留原会话。"
-        : "移动会改写原会话归属；执行前会完整备份并要求确认。";
-  $("#targetProviderLabel").hidden = isArchiveAction();
-  $("#targetProviderField").hidden = isArchiveAction();
-  $("#targetHostLabel").hidden = isArchiveAction();
-  $("#targetHostField").hidden = isArchiveAction();
+  $("#actionNote").textContent = fork
+    ? "Fork 通过 Codex 官方 app-server 创建，并保留原会话。"
+    : "移动会改写原会话归属；执行前会完整备份并要求确认。";
+  $("#targetProviderLabel").hidden = false;
+  $("#targetProviderField").hidden = false;
+  $("#targetHostLabel").hidden = false;
+  $("#targetHostField").hidden = false;
   $("#targetCwdField").hidden = !isCrossHost();
   $("#selectAll").disabled = false;
   $("#selectAll").closest("label").title = "选择当前筛选结果中的可操作 Session";
@@ -288,10 +288,6 @@ function renderProviders() {
 }
 
 function renderTargets() {
-  if (isArchiveAction()) {
-    $("#targetProvider").innerHTML = "";
-    return;
-  }
   const hostSelect = $("#targetHost");
   const previousHost = hostSelect.value;
   const availableHosts = state.hosts.filter(host => host.connected && !host.loading && (state.activeHost === "local" || host.id !== state.activeHost));
@@ -348,14 +344,15 @@ function renderSessions() {
   $("#sessionList").innerHTML = sessions.length ? sessions.map(session => {
     const selected = state.selected.has(session.id);
     const selectable = sessionSelectable(session);
-    const chips = [
-      session.locked ? '<span class="status-chip locked">使用中</span>' : "",
-      session.archived ? '<span class="status-chip archived">已归档</span>' : "",
-    ].join("");
-    return `<article class="session-card ${selected ? "selected" : ""} ${!selectable ? "locked" : ""}" data-draggable="${selectable}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.displayTitle)}, Project ${escapeHtml(projectLabel(session.cwd))}">
+    const chips = session.locked ? '<span class="status-chip locked">使用中</span>' : "";
+    const archiveLabel = session.archived ? "还原归档" : "归档";
+    const archiveIcon = session.archived
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path><path d="m9 15 3-3 3 3"></path><path d="M12 12v5"></path></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path><path d="M10 12h4"></path></svg>';
+    return `<article class="session-card ${selected ? "selected" : ""} ${!selectable ? "locked" : ""} ${session.archived ? "archived" : ""}" data-draggable="${selectable}" data-id="${escapeHtml(session.id)}" tabindex="0" aria-label="${escapeHtml(session.displayTitle)}, Project ${escapeHtml(projectLabel(session.cwd))}">
       <div class="session-card-top">
         <label class="session-check" aria-label="选择 ${escapeHtml(session.displayTitle)}"><input type="checkbox" ${selected ? "checked" : ""} ${!selectable ? "disabled" : ""}></label>
-        <div class="session-card-actions">${chips}<button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.displayTitle)} 的完整信息" aria-controls="sessionPopover" aria-expanded="false" title="查看完整信息">i</button></div>
+        <div class="session-card-actions">${chips}<button class="archive-button ${session.archived ? "active" : ""}" type="button" aria-label="${archiveLabel} ${escapeHtml(session.displayTitle)}" title="${archiveLabel}" ${session.locked ? "disabled" : ""}>${archiveIcon}</button><button class="info-button" type="button" aria-label="查看 ${escapeHtml(session.displayTitle)} 的完整信息" aria-controls="sessionPopover" aria-expanded="false" title="查看完整信息">i</button></div>
       </div>
       <strong class="session-card-title">${escapeHtml(session.displayTitle)}</strong>
       <div class="session-project" title="${escapeHtml(session.cwd || "无 Project")}"><span aria-hidden="true">⌂</span>${escapeHtml(projectLabel(session.cwd))}</div>
@@ -367,6 +364,15 @@ function renderSessions() {
     const id = card.dataset.id;
     const session = state.sessions.find(item => item.host_id === state.activeHost && item.id === id);
     card.querySelector("input")?.addEventListener("change", event => setSessionSelected(id, event.target.checked));
+    card.querySelector(".archive-button")?.addEventListener("click", event => {
+      event.stopPropagation();
+      hideSessionPopover();
+      if (session.locked) {
+        toast("正在使用的 Session 必须先关闭后才能改变归档状态。", true);
+        return;
+      }
+      openMigrationDialog(session.archived ? "unarchive" : "archive", [session]);
+    });
     card.querySelector(".info-button")?.addEventListener("click", event => {
       const shouldClose = state.popoverPinned && state.popoverSessionId === id;
       shouldClose ? hideSessionPopover() : showSessionPopover(card, session, true);
@@ -637,9 +643,7 @@ function setSessionSelected(id, selected) {
   if (!session || !sessionSelectable(session)) {
     const message = session?.locked
       ? "正在使用的 Session 必须先关闭后才能操作。"
-      : isArchiveAction() && session?.host_id !== "local"
-        ? "远程 Session 当前只支持 Fork 或移动；归档仍限定本机。"
-        : state.action === "archive" ? "这个 Session 已经归档。" : "这个 Session 当前没有归档。";
+      : "这个 Session 已归档；请先使用卡片上的还原归档按钮。";
     toast(message, true);
     return;
   }
@@ -680,14 +684,14 @@ function renderQueue() {
   const sessions = selectedSessions();
   $("#queueCount").textContent = sessions.length;
   $("#selectedCount").textContent = sessions.length;
-  $("#sourceSummary").textContent = isArchiveAction()
-    ? `${new Set(sessions.map(session => session.provider)).size} 个 Provider`
-    : sessions[0] ? `${state.activeHost} · ${sessions[0].provider}` : "尚未选择";
+  $("#sourceSummary").textContent = sessions[0]
+    ? `${state.activeHost} · ${sessions[0].provider}`
+    : "尚未选择";
   $("#backupSummary").textContent = state.plan
     ? formatBytes(state.plan.estimated_backup_bytes)
     : sessions.length ? `至少 ${formatBytes(sessions.reduce((sum, session) => sum + session.size_bytes, 0))}` : "—";
   $("#previewButton").disabled = sessions.length === 0
-    || (!isArchiveAction() && !$("#targetProvider").value)
+    || !$("#targetProvider").value
     || (isCrossHost() && !$("#targetCwd").value.trim());
   $("#transferQueue").innerHTML = sessions.length ? sessions.map(session => `
     <div class="queue-item"><span></span><div><strong>${escapeHtml(session.displayTitle)}</strong><small>${escapeHtml(session.id.slice(0, 13))} · ${formatBytes(session.size_bytes)}</small></div><button type="button" class="queue-remove" data-id="${escapeHtml(session.id)}" aria-label="从队列移除 ${escapeHtml(session.displayTitle)}">×</button></div>
@@ -706,9 +710,9 @@ function renderOperations() {
         : operation.kind === "cross_host_fork" || operation.kind === "cross_host_move"
           ? `${escapeHtml(operation.source_host)} → ${escapeHtml(operation.target_host)} · ${operation.kind.endsWith("fork") ? "Fork" : "Move"}`
         : operation.kind === "archive"
-          ? "归档 Session"
+          ? `${escapeHtml(operation.host_id || "local")} · 归档 Session`
           : operation.kind === "unarchive"
-            ? "还原归档 Session"
+            ? `${escapeHtml(operation.host_id || "local")} · 还原归档 Session`
             : `恢复 ${escapeHtml(operation.restores_operation || "snapshot")}`;
     const status = operation.restored_by ? "已恢复" : operation.status;
     return `<article class="operation"><div class="operation-top"><strong class="operation-route">${route}</strong><span class="operation-status ${escapeHtml(operation.status)}">${escapeHtml(status)}</span></div><div class="operation-bottom"><span>${escapeHtml(new Date(operation.created_at).toLocaleString("zh-CN"))} · ${(operation.session_ids || []).length} sessions</span>${canRestore ? `<button class="restore-button" type="button" data-id="${escapeHtml(operation.operation_id)}">恢复</button>` : `<code>${escapeHtml(operation.operation_id)}</code>`}</div></article>`;
@@ -716,14 +720,15 @@ function renderOperations() {
   $$(".restore-button").forEach(button => button.addEventListener("click", () => openRestore(button.dataset.id)));
 }
 
-async function openMigrationDialog() {
-  const sessions = selectedSessions();
+async function openMigrationDialog(action = state.action, sessions = selectedSessions()) {
+  state.dialogAction = action;
+  state.dialogSessionIds = sessions.map(session => session.id);
   const target = $("#targetProvider").value;
-  if (!sessions.length || (!isArchiveAction() && !target)) return;
+  if (!sessions.length || (!isArchiveAction(action) && !target)) return;
   const dialog = $("#migrationDialog");
-  const fork = state.action === "fork";
-  const archive = state.action === "archive";
-  const unarchive = state.action === "unarchive";
+  const fork = action === "fork";
+  const archive = action === "archive";
+  const unarchive = action === "unarchive";
   const acknowledgement = archive ? "ARCHIVE" : unarchive ? "UNARCHIVE" : fork ? "FORK" : "MIGRATE";
   const label = archive ? "归档" : unarchive ? "还原归档" : fork ? "Fork" : "移动";
   $("#dialogKicker").textContent = `${acknowledgement} CHECK`;
@@ -738,7 +743,7 @@ async function openMigrationDialog() {
   $("#actionAckCode").textContent = acknowledgement;
   $("#migrateAck").placeholder = acknowledgement;
   $("#migrateButton").textContent = `创建备份并${label}`;
-  $("#dialogSource").textContent = isArchiveAction() ? `${sessions.length} 个 Session` : `${state.activeHost} · ${sessions[0].provider}`;
+  $("#dialogSource").textContent = isArchiveAction(action) ? `${state.activeHost} · ${sessions.length} 个 Session` : `${state.activeHost} · ${sessions[0].provider}`;
   $("#dialogTarget").textContent = archive ? "已归档" : unarchive ? "活动列表" : `${$("#targetHost").value} · ${target}`;
   $("#dialogCount").textContent = sessions.length;
   $("#riskList").innerHTML = "";
@@ -749,10 +754,10 @@ async function openMigrationDialog() {
   $("#migrateButton").disabled = true;
   dialog.showModal();
   try {
-    const previewPath = isArchiveAction() ? "/api/archive/preview" : isCrossHost() ? "/api/transfer/preview" : fork ? "/api/forks/preview" : "/api/preview";
-    const payload = isArchiveAction()
-      ? {session_ids: sessions.map(session => session.id), archived: archive}
-      : isCrossHost()
+    const previewPath = isArchiveAction(action) ? "/api/archive/preview" : isCrossHost(action) ? "/api/transfer/preview" : fork ? "/api/forks/preview" : "/api/preview";
+    const payload = isArchiveAction(action)
+      ? {session_ids: sessions.map(session => session.id), archived: archive, host_id: state.activeHost}
+      : isCrossHost(action)
         ? {session_ids: sessions.map(session => session.id), source_host: state.activeHost, target_host: $("#targetHost").value, target_provider: target, target_cwd: $("#targetCwd").value, move: !fork}
       : fork
         ? {session_ids: sessions.map(session => session.id), target_provider: target}
@@ -774,9 +779,10 @@ async function openMigrationDialog() {
 }
 
 function updateMigrateButton() {
-  const acknowledgement = state.action === "archive"
+  const action = state.dialogAction || state.action;
+  const acknowledgement = action === "archive"
     ? "ARCHIVE"
-    : state.action === "unarchive" ? "UNARCHIVE" : state.action === "fork" ? "FORK" : "MIGRATE";
+    : action === "unarchive" ? "UNARCHIVE" : action === "fork" ? "FORK" : "MIGRATE";
   $("#migrateButton").disabled = !state.plan?.executable
     || !$("#compatibilityAck").checked
     || $("#migrateAck").value !== acknowledgement;
@@ -784,17 +790,19 @@ function updateMigrateButton() {
 
 async function migrate() {
   $("#migrateButton").disabled = true;
-  const sessions = selectedSessions();
+  const sessions = dialogSessions();
+  const action = state.dialogAction || state.action;
   try {
-    const fork = state.action === "fork";
-    if (isArchiveAction()) {
-      const archived = state.action === "archive";
+    const fork = action === "fork";
+    if (isArchiveAction(action)) {
+      const archived = action === "archive";
       const result = await api("/api/archive", {
         method: "POST",
         body: JSON.stringify({
           session_ids: sessions.map(session => session.id),
           archived,
           acknowledgement: $("#migrateAck").value,
+          host_id: state.activeHost,
         }),
       });
       $("#migrationDialog").close();
@@ -809,7 +817,7 @@ async function migrate() {
       }
       return;
     }
-    if (isCrossHost()) {
+    if (isCrossHost(action)) {
       const result = await api("/api/transfer", {
         method: "POST",
         body: JSON.stringify({
@@ -1017,7 +1025,12 @@ function setupEvents() {
     const id = event.dataTransfer.getData("text/plain") || state.draggingId;
     if (id) { setSessionSelected(id, true); toast("Session 已加入迁移队列。"); }
   });
-  $("#previewButton").addEventListener("click", openMigrationDialog);
+  $("#previewButton").addEventListener("click", () => openMigrationDialog());
+  $("#migrationDialog").addEventListener("close", () => {
+    state.dialogAction = null;
+    state.dialogSessionIds = null;
+    state.plan = null;
+  });
   $("#compatibilityAck").addEventListener("change", updateMigrateButton);
   $("#migrateAck").addEventListener("input", updateMigrateButton);
   $("#migrateButton").addEventListener("click", migrate);

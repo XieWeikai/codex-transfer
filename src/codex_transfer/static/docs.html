@@ -90,8 +90,8 @@
 
       <article id="archive" data-doc-section data-keywords="archive unarchive active lock writer visibility 归档 使用中">
         <h2>归档与还原归档</h2>
-        <p>Codex Transfer 调用 Codex 官方 <code>thread/archive</code> 与 <code>thread/unarchive</code>。归档只改变默认列表中的可见状态，不删除聊天历史，也不改变 Provider；Codex 可能同时移动 rollout 并更新 SQLite 路径，因此每条操作仍会先备份两者。</p>
-        <ol><li>关闭准备操作的 Codex 任务。</li><li>选择“归档”或“还原归档”，可跨 Provider 多选。</li><li>检查 writer lock、当前归档状态和数据库完整性。</li><li>输入 <code>ARCHIVE</code> 或 <code>UNARCHIVE</code>。</li><li>每条 Session 独立执行、验证并写入审计。</li></ol>
+        <p>Codex Transfer 在当前选择的本机或 Desktop SSH 主机上调用 Codex 官方 <code>thread/archive</code> 与 <code>thread/unarchive</code>。归档只改变默认列表中的可见状态，不删除聊天历史，也不改变 Provider；Codex 可能同时移动 rollout 并更新 SQLite 路径，因此每条操作仍会先把两者备份到本地审计目录。</p>
+        <ol><li>关闭准备操作的 Codex 任务。</li><li>在 Session 卡片上点击归档或还原归档图标。</li><li>检查远程 writer lock、当前归档状态和数据库完整性。</li><li>输入 <code>ARCHIVE</code> 或 <code>UNARCHIVE</code>。</li><li>操作独立执行、验证并写入带主机 ID 的审计记录。</li></ol>
         <div class="docs-callout warning"><strong>批量归档不是原子事务</strong><p>中途失败时，已完成条目会保留，后续条目停止。每条都有独立快照，可以从操作记录定位恢复依据。</p></div>
         <h3>如何判断 Session 正在使用</h3>
         <p>Codex Transfer 检查 <code>thread-writer-locks/&lt;session-id&gt;.lock</code>，并尝试取得非阻塞独占锁。拿不到锁说明其他 Codex 进程拥有写权限，此时所有修改都会被阻断；能取得锁则说明即使锁文件存在，它当前也没有被持有。</p>

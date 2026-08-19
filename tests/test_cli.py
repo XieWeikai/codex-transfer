@@ -120,14 +120,20 @@ class FakeEngine:
         self.calls.append(("restore", operation_id, acknowledgement))
         return {"operation_id": "restore-1", "kind": "restore", "status": "completed"}
 
-    def preview_archive(self, session_ids: list[str], archived: bool) -> dict:
-        self.calls.append(("archive-preview", session_ids, archived))
+    def preview_archive(
+        self, session_ids: list[str], archived: bool, host_id: str = "local"
+    ) -> dict:
+        self.calls.append(("archive-preview", session_ids, archived, host_id))
         return {"sessions": session_ids, "archived": archived, "risks": [], "executable": True}
 
     def set_archived_batch(
-        self, session_ids: list[str], archived: bool, acknowledgement: str
+        self,
+        session_ids: list[str],
+        archived: bool,
+        acknowledgement: str,
+        host_id: str = "local",
     ) -> dict:
-        self.calls.append(("archive", session_ids, archived, acknowledgement))
+        self.calls.append(("archive", session_ids, archived, acknowledgement, host_id))
         return {
             "requested_session_ids": session_ids,
             "archived": archived,
@@ -256,7 +262,15 @@ class CliTest(unittest.TestCase):
 
     def test_archive_and_unarchive_commands_route_to_shared_engine(self) -> None:
         preview = parser().parse_args(
-            ["archive-preview", "--session", "s-1", "--session", "s-2"]
+            [
+                "archive-preview",
+                "--session",
+                "s-1",
+                "--session",
+                "s-2",
+                "--host",
+                "source-host",
+            ]
         )
         unarchive = parser().parse_args(
             [
@@ -274,8 +288,11 @@ class CliTest(unittest.TestCase):
         self.assertEqual(preview_code, 0)
         self.assertFalse(result["archived"])
         self.assertEqual(code, 0)
-        self.assertIn(("archive-preview", ["s-1", "s-2"], True), engine.calls)
-        self.assertIn(("archive", ["s-3"], False, "UNARCHIVE"), engine.calls)
+        self.assertIn(
+            ("archive-preview", ["s-1", "s-2"], True, "source-host"),
+            engine.calls,
+        )
+        self.assertIn(("archive", ["s-3"], False, "UNARCHIVE", "local"), engine.calls)
 
 
 if __name__ == "__main__":
