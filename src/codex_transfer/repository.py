@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .model import Session, TraceProfile, ensure_within
+from .providers import provider_catalog
 
 try:
     import fcntl
@@ -47,6 +48,15 @@ class CodexRepository:
             ids.add(session.provider)
         return sorted(ids, key=str.casefold)
 
+    def provider_details(self, sessions: Iterable[Session] | None = None) -> list[dict]:
+        items = list(sessions) if sessions is not None else self.scan_sessions()
+        return provider_catalog(
+            self.config(),
+            items,
+            host_id="local",
+            config_source=str(self.home / "config.toml"),
+        )
+
     def state_db_paths(self) -> list[Path]:
         candidates = [self.home / self.STATE_DB]
         config_home = self.config().get("sqlite_home")
@@ -60,6 +70,7 @@ class CodexRepository:
 
     def scan_sessions(self) -> list[Session]:
         sessions: dict[str, Session] = {}
+        indexed_names = self._session_index_names()
         for db_path in self.state_db_paths():
             with self._connect(db_path, readonly=True) as conn:
                 if not self._has_threads_schema(conn):
@@ -67,8 +78,16 @@ class CodexRepository:
                 columns = self._columns(conn, "threads")
                 model_expr = "model" if "model" in columns else "NULL"
                 archived_expr = "archived" if "archived" in columns else "0"
+                name_expr = "name" if "name" in columns else "NULL"
+                first_message_expr = (
+                    "first_user_message" if "first_user_message" in columns else "NULL"
+                )
+                history_mode_expr = "history_mode" if "history_mode" in columns else "'legacy'"
                 rows = conn.execute(
-                    f"""SELECT id, title, model_provider, {model_expr} AS model, cwd,
+                    f"""SELECT id, title, {name_expr} AS name,
+                               {first_message_expr} AS first_user_message,
+                               {history_mode_expr} AS history_mode, model_provider,
+                               {model_expr} AS model, cwd,
                                updated_at, rollout_path, {archived_expr} AS archived
                         FROM threads ORDER BY updated_at DESC"""
                 ).fetchall()
@@ -80,7 +99,7 @@ class CodexRepository:
                         row["id"],
                         Session(
                             id=row["id"],
-                            title=row["title"] or "Untitled session",
+                            title=self._resolve_display_title(row, indexed_names),
                             provider=row["model_provider"],
                             model=row["model"],
                             cwd=row["cwd"] or "",
@@ -104,14 +123,63 @@ class CodexRepository:
         return [indexed[session_id] for session_id in wanted]
 
     def session_title(self, session_id: str) -> str:
+        indexed_names = self._session_index_names()
         for db_path in self.state_db_paths():
             with self._connect(db_path, readonly=True) as conn:
                 if not self._has_threads_schema(conn):
                     continue
-                row = conn.execute("SELECT title FROM threads WHERE id = ?", (session_id,)).fetchone()
+                columns = self._columns(conn, "threads")
+                name_expr = "name" if "name" in columns else "NULL"
+                first_message_expr = (
+                    "first_user_message" if "first_user_message" in columns else "NULL"
+                )
+                history_mode_expr = "history_mode" if "history_mode" in columns else "'legacy'"
+                row = conn.execute(
+                    f"""SELECT id, title, {name_expr} AS name,
+                               {first_message_expr} AS first_user_message,
+                               {history_mode_expr} AS history_mode
+                        FROM threads WHERE id = ?""",
+                    (session_id,),
+                ).fetchone()
                 if row is not None:
-                    return row["title"] or "Untitled session"
+                    return self._resolve_display_title(row, indexed_names)
         raise RepositoryError(f"Unknown session ID: {session_id}")
+
+    def _session_index_names(self) -> dict[str, str]:
+        path = self.home / "session_index.jsonl"
+        if not path.exists():
+            return {}
+        names: dict[str, str] = {}
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    thread_id = entry.get("id")
+                    name = entry.get("thread_name")
+                    if isinstance(thread_id, str) and isinstance(name, str) and name.strip():
+                        names[thread_id] = name.strip()
+        except OSError:
+            return {}
+        return names
+
+    @staticmethod
+    def _resolve_display_title(row: sqlite3.Row, indexed_names: dict[str, str]) -> str:
+        title = str(row["title"] or "").strip()
+        name = str(row["name"] or "").strip()
+        history_mode = str(row["history_mode"] or "legacy")
+        if history_mode == "paginated" and name:
+            return name
+        if history_mode == "legacy":
+            first_message = str(row["first_user_message"] or "").strip()
+            if first_message and title and title != first_message:
+                return title
+            indexed_name = indexed_names.get(str(row["id"]))
+            if indexed_name:
+                return indexed_name
+        return name or title or "Untitled session"
 
     def integrity_check(self, db_path: Path) -> str:
         with self._connect(db_path, readonly=True) as conn:
@@ -228,6 +296,52 @@ class CodexRepository:
                 return False
         except (OSError, BlockingIOError):
             return True
+
+    def lock_snapshot(self) -> dict[str, bool]:
+        thread_ids: set[str] = set()
+        for db_path in self.state_db_paths():
+            try:
+                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                    thread_ids.update(row[0] for row in conn.execute("SELECT id FROM threads"))
+            except sqlite3.Error:
+                continue
+        return {thread_id: self.is_thread_locked(thread_id) for thread_id in thread_ids}
+
+    def workspace_fingerprint(self) -> tuple:
+        databases = []
+        preferred = (
+            "id",
+            "name",
+            "title",
+            "model_provider",
+            "cwd",
+            "archived",
+            "model",
+            "rollout_path",
+        )
+        for db_path in self.state_db_paths():
+            try:
+                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
+                    selected = [column for column in preferred if column in columns]
+                    rows = tuple(
+                        sorted(conn.execute(f"SELECT {', '.join(selected)} FROM threads").fetchall())
+                    )
+                    databases.append((str(db_path), tuple(selected), rows))
+            except sqlite3.Error as exc:
+                databases.append((str(db_path), "error", str(exc)))
+        def file_marker(path: Path) -> tuple[int, int] | None:
+            try:
+                stat = path.stat()
+                return (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                return None
+
+        # Older Codex builds can keep user-visible titles in session_index.jsonl
+        # rather than the threads table, so it participates in the UI fingerprint.
+        config_marker = file_marker(self.home / "config.toml")
+        index_marker = file_marker(self.home / "session_index.jsonl")
+        return (tuple(databases), config_marker, index_marker)
 
     def _validated_rollout_path(self, raw: str) -> Path:
         path = Path(raw)

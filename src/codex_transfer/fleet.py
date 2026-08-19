@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from .app_server import AppServerError, CodexAppServer, ForkResult
 from .audit import AuditStore
 from .model import Risk, Session, TraceProfile, require_safe_identifier
+from .providers import provider_catalog
 from .repository import CodexRepository
 
 try:
@@ -49,6 +50,8 @@ class HostAdapter(Protocol):
     def sessions(self) -> list[Session]: ...
 
     def provider_ids(self) -> list[str]: ...
+
+    def provider_details(self, sessions: list[Session]) -> list[dict[str, Any]]: ...
 
     def fetch_rollout(self, path: str) -> bytes: ...
 
@@ -126,6 +129,9 @@ class LocalHostAdapter:
 
     def provider_ids(self) -> list[str]:
         return self.repository.provider_ids()
+
+    def provider_details(self, sessions: list[Session]) -> list[dict[str, Any]]:
+        return self.repository.provider_details(sessions)
 
     def fetch_rollout(self, path: str) -> bytes:
         validated = self.repository._validated_rollout_path(path)
@@ -339,6 +345,16 @@ json.dump(locked,sys.stdout)
     def provider_ids(self) -> list[str]:
         return self.app_server.provider_ids()
 
+    def provider_details(self, sessions: list[Session]) -> list[dict[str, Any]]:
+        result = self.app_server.request("config/read", {})
+        config = result.get("config") or {}
+        return provider_catalog(
+            config if isinstance(config, dict) else {},
+            sessions,
+            host_id=self.alias,
+            config_source=posixpath.join(self.codex_home, "config.toml"),
+        )
+
     def fetch_rollout(self, path: str) -> bytes:
         path = self._validate_path(path)
         return self._run("cat -- " + shlex.quote(path))
@@ -480,7 +496,9 @@ class HostFleet:
         hosts = []
         for adapter in self._refresh_hosts().values():
             descriptor = adapter.descriptor.to_dict()
-            descriptor.update({"providers": [], "session_count": 0, "loading": True})
+            descriptor.update(
+                {"providers": [], "provider_details": [], "session_count": 0, "loading": True}
+            )
             hosts.append(descriptor)
         hosts.sort(key=lambda item: (item["id"] != "local", item["label"].casefold()))
         return {"ready": False, "hosts": hosts, "sessions": []}
@@ -493,7 +511,7 @@ class HostFleet:
         wait_for_remote: bool = False,
     ) -> dict[str, Any]:
         with self._cache_lock:
-            if self._cache and time.monotonic() - self._cache[0] < 15:
+            if not wait_for_remote and self._cache and time.monotonic() - self._cache[0] < 15:
                 cached = dict(self._cache[1])
                 cached["operations"] = operations
                 if local_sessions is not None:
@@ -520,20 +538,25 @@ class HostFleet:
                 )
                 self._scan_thread.start()
         local_items = local_sessions or self.local.sessions()
-        local_providers = self.local.repository.provider_ids(local_items)
         hosts = []
         for adapter in adapters.values():
             descriptor = adapter.descriptor.to_dict()
             if adapter is self.local:
+                provider_details = local_status.get("provider_details") or self.local.provider_details(
+                    local_items
+                )
                 descriptor.update(
                     {
-                        "providers": local_providers,
+                        "providers": [item["id"] for item in provider_details],
+                        "provider_details": provider_details,
                         "session_count": len(local_items),
                         "loading": False,
                     }
                 )
             else:
-                descriptor.update({"providers": [], "session_count": 0, "loading": True})
+                descriptor.update(
+                    {"providers": [], "provider_details": [], "session_count": 0, "loading": True}
+                )
             hosts.append(descriptor)
         hosts.sort(key=lambda item: (item["id"] != "local", item["label"].casefold()))
         return {
@@ -553,18 +576,14 @@ class HostFleet:
         sessions: list[Session] = []
         hosts: list[dict[str, Any]] = []
 
-        def scan(adapter: HostAdapter) -> tuple[list[Session], list[str]]:
+        def scan(adapter: HostAdapter) -> tuple[list[Session], list[dict[str, Any]]]:
             if adapter is self.local and local_sessions is not None:
                 items = local_sessions
-                configured = self.local.repository.provider_ids(items)
+                details = local_status.get("provider_details") or adapter.provider_details(items)
             else:
                 items = adapter.sessions()
-                configured = adapter.provider_ids()
-            providers = sorted(
-                {*configured, *(session.provider for session in items)},
-                key=str.casefold,
-            )
-            return items, providers
+                details = adapter.provider_details(items)
+            return items, details
 
         with ThreadPoolExecutor(max_workers=min(6, len(adapters))) as executor:
             jobs = {executor.submit(scan, adapter): adapter for adapter in adapters.values()}
@@ -572,12 +591,21 @@ class HostFleet:
                 adapter = jobs[future]
                 descriptor = adapter.descriptor.to_dict()
                 try:
-                    items, providers = future.result()
+                    items, provider_details = future.result()
                     sessions.extend(items)
-                    descriptor["providers"] = providers
+                    descriptor["provider_details"] = provider_details
+                    descriptor["providers"] = [item["id"] for item in provider_details]
                     descriptor["session_count"] = len(items)
                 except Exception as exc:
-                    descriptor.update({"connected": False, "error": str(exc), "providers": [], "session_count": 0})
+                    descriptor.update(
+                        {
+                            "connected": False,
+                            "error": str(exc),
+                            "providers": [],
+                            "provider_details": [],
+                            "session_count": 0,
+                        }
+                    )
                 hosts.append(descriptor)
         hosts.sort(key=lambda item: (item["id"] != "local", item["label"].casefold()))
         sessions.sort(key=lambda item: item.updated_at, reverse=True)
@@ -623,7 +651,7 @@ class HostFleet:
                     Risk(
                         "critical",
                         "session-active",
-                        f"会话 {session.id} 正被主机 {host_id} 上的 Codex 写入。",
+                        f"会话 {session.id} 的独占 writer lock 正被主机 {host_id} 上的 Codex 持有。",
                         "关闭或停止该远程 Codex 任务，然后重新运行预检。",
                     )
                 )

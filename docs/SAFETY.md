@@ -32,7 +32,9 @@ When a fork receives a new turn, undo would delete the new branch. Codex Transfe
 
 Archive and Unarchive use Codex's official app-server methods on the selected local or Desktop-connected SSH host. They do not delete conversation history or change Provider, but Codex may move the rollout and update its SQLite path. Codex Transfer therefore stores both pre-write representations in the local audit directory before every item, verifies the resulting archive bit and rollout, and records each batch item as an independent operation.
 
-Codex refuses archive operations when another process owns the thread or a spawned descendant. Codex Transfer also checks the per-thread writer lock before starting, but an idle visible UI tab is not necessarily locked. Close the task before changing archive state to avoid racing a process that is about to resume it.
+Codex refuses archive operations when another process owns the thread or a spawned descendant. Codex Transfer also checks the per-thread writer lock immediately before starting. In current Codex, opening or resuming a thread installs a live recorder that retains the writer lock even while no turn is running. After the last subscriber leaves, app-server deliberately keeps the thread loaded for up to 30 idle minutes. Close the task and wait for the “占用” state to clear before changing archive state.
+
+There is no safe per-session force takeover in the public app-server interface. `thread/unsubscribe` affects only the calling connection and still honors the 30-minute unload delay. Deleting the lock pathname does not revoke the owning process's kernel lock and can create two writers on different inodes. Codex Transfer therefore never removes a live lock or kills the owning process.
 
 ## Backup privacy
 

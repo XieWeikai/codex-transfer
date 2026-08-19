@@ -9,7 +9,7 @@
 [![Loopback UI](https://img.shields.io/badge/web%20UI-loopback%20only-4c956c)](#安全模型)
 [![Runtime](https://img.shields.io/badge/runtime-stdlib%20only-2f855a)](#开发)
 
-[English](README.md) | 简体中文 · [文档](docs/README.md) · [安全策略](SECURITY_ZH.md) · [贡献指南](CONTRIBUTING_ZH.md)
+[English](README.md) | 简体中文 · [文档](docs/README.md) · [Provider 原理](docs/PROVIDERS_ZH.md) · [安全策略](SECURITY_ZH.md) · [贡献指南](CONTRIBUTING_ZH.md)
 
 </div>
 
@@ -34,6 +34,7 @@ Codex Transfer 是一个本地 Web 工作台，用于查看 Codex Session，并�
 | 备份代际 | 每次写操作都保存 rollout、SQLite 一致性快照、Manifest 和 SHA-256。 |
 | 分叉感知恢复 | 后续聊天可能被覆盖时，拒绝自动恢复或删除 Fork。 |
 | 大工作区性能 | 首屏只加载有界摘要，长标题按需读取，选择时不重建整个网格。 |
+| 事件驱动更新 | 本机锁、改名、归档和 Session 变化通过原生文件事件与 SSE 更新，不做周期性工作区轮询。 |
 
 ## 工作原理
 
@@ -52,7 +53,7 @@ Codex home
 - **归档 / 还原归档**在所选本机或远程主机上调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。
 - **恢复** 本身也是一次新的审计操作。只有当前哈希仍与记录的操作后状态一致时才会执行。
 
-Codex Transfer 不会复制或保存 API Key、OAuth 状态、Provider 定义、Base URL、模型别名或其他凭据。
+Codex Transfer 不会复制或保存 API Key、OAuth 状态、Provider 定义、Base URL、模型别名或其他凭据。完整的路由模型和跨主机含义请阅读[理解 Codex Provider](docs/PROVIDERS_ZH.md)。
 
 ## 快速开始
 
@@ -146,7 +147,11 @@ ct restore --operation OPERATION_ID --acknowledge RESTORE --json
 
 预检命令不会写入 Session 状态。写命令会重新执行预检，创建与 Web UI 完全相同的备份和审计记录，并要求相同的明确确认词。
 
-当 Codex Transfer 无法对 `thread-writer-locks/<session-id>.lock` 取得非阻塞独占锁时，Session 会显示为“使用中”。这是写入安全信号，不是“最近是否活跃”的推测：一个空闲 UI 标签页可能已打开但没有持锁，而只要 writer lock 被持有，所有写操作都会被阻断。
+当 Codex Transfer 无法对 `thread-writer-locks/<session-id>.lock` 取得非阻塞独占锁时，Session 会显示为“占用”。当前 Codex 在恢复 thread 时取得该锁，并在内存 recorder 仍被加载期间持续持有。最后一个客户端取消订阅后，app-server 还会等待“无订阅且无活动”满 30 分钟才卸载。因此“占用”表示 Codex 拥有独占写入权，不等于模型正在生成。
+
+Web UI 通过原生文件事件和 SSE 接收本机变化。锁变化只请求轻量锁快照；SQLite/WAL 的连续变化会等待短暂静默期，并且只有界面可见元数据改变时才刷新工作区，普通消息追加会被过滤，不存在周期性全量轮询。现有 Desktop SSH proxy 不会把远端文件事件转发给 Codex Transfer，因此远端主机在切换主机、窗口重新获得焦点、手动刷新和本应用完成操作时刷新。
+
+Session 卡片遵循 Codex 自己的名称优先级：paginated history 使用 `threads.name`；legacy history 使用与首条消息不同的 `threads.title`，否则读取 `session_index.jsonl` 的最新记录；未命名会话才回退到自动标题或第一条指令预览。
 
 ### Agent Skills
 
@@ -196,6 +201,7 @@ Codex Transfer 是一个同用户、本地运行的管理工具：
 |---|---|
 | [文档索引](docs/README.md) | 仓库文档与应用内文档入口。 |
 | [设计](docs/DESIGN.md) | 架构、存储边界、不变量和源码研究结果。 |
+| [Provider 原理](docs/PROVIDERS_ZH.md) | Provider ID、配置、认证、运行时路由与迁移含义。 |
 | [安全与恢复](docs/SAFETY.md) | 凭据、加密推理、来源追溯、状态分叉和备份隐私。 |
 | [操作手册](docs/OPERATIONS.md) | 安装、Fork、移动、恢复和自定义路径。 |
 

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en" data-theme="graphite">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Codex Transfer Docs</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body class="docs-body">
+  <a class="skip-link" href="#docsContent">Skip to documentation</a>
+  <header class="docs-header">
+    <a class="docs-brand" href="/"><span class="docs-logo" aria-hidden="true"></span><strong>Codex Transfer</strong><small>Docs</small></a>
+    <label class="docs-search"><span>Search</span><input id="docsSearch" type="search" placeholder="Search concepts, providers, forks, recovery, or install" aria-label="Search documentation"></label>
+    <div class="docs-header-actions">
+      <label class="theme-control"><span>Theme</span><select id="themeSelect" aria-label="Interface theme"><option value="graphite">Graphite</option><option value="cloud">Cloud</option><option value="contrast">High contrast</option></select></label>
+      <label class="language-control"><span>Language</span><select id="docsLanguageSelect" aria-label="Documentation language"><option value="zh-CN">中文</option><option value="en">English</option></select></label>
+      <a class="button button-primary header-link" href="/">Open workspace</a>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <aside class="docs-sidebar" aria-label="Documentation navigation">
+      <span class="docs-nav-label">Start</span>
+      <a href="#overview">Overview</a>
+      <a href="#mental-model">Core concepts</a>
+      <a href="#provider-model">Provider model</a>
+      <a href="#storage">Storage model</a>
+      <span class="docs-nav-label">Operations</span>
+      <a href="#fork">Fork to provider</a>
+      <a href="#move">Move session</a>
+      <a href="#cross-host">Cross-host transfer</a>
+      <a href="#archive">Archive session</a>
+      <a href="#recovery">Backup and recovery</a>
+      <span class="docs-nav-label">Reference</span>
+      <a href="#risk">Risk model</a>
+      <a href="#install">Install and run</a>
+      <a href="#limits">Limitations</a>
+    </aside>
+
+    <main class="docs-content" id="docsContent">
+      <article id="overview" data-doc-section data-keywords="overview session provider fork move">
+        <p class="docs-eyebrow">AUDITED SESSION OPERATIONS</p>
+        <h1>Understand a session before changing it</h1>
+        <p class="docs-lead">Codex Transfer manages sessions on the local machine and on hosts currently connected by Codex Desktop. Every write is preceded by preflight checks and snapshots, then followed by audit logging and result verification.</p>
+        <div class="docs-callout safe"><strong>Prefer a fork</strong><p>A fork creates an independent thread and leaves the source untouched. Move only when the original session itself must change ownership.</p></div>
+      </article>
+
+      <article id="mental-model" data-doc-section data-keywords="principle model provider credential encrypted content">
+        <h2>Core concepts</h2>
+        <p>A session is not plain chat text. It combines a rollout event stream, a SQLite index, project and working-directory metadata, and state created by the model backend. A provider transfer changes who handles the next resume; it does not convert the protocol or historical payloads.</p>
+        <div class="docs-flow" aria-label="Session operation data flow"><span>rollout JSONL</span><b>+</b><span>SQLite thread</span><b>→</b><span>preflight + snapshot</span><b>→</b><span>fork or move</span><b>→</b><span>hash verification</span></div>
+        <h3>A provider ID is not a credential</h3>
+        <p><code>model_provider</code> is a routing and grouping identifier. API keys, OAuth state, base URLs, and model mappings live in separate configuration. Codex Transfer never copies or backs them up.</p>
+        <div class="docs-callout safe"><strong>Large lists load on demand</strong><p>The first view reads compact session summaries. Full long titles load only when details are opened, and selecting a session updates the relevant card and queue instead of rebuilding the entire grid.</p></div>
+      </article>
+
+      <article id="provider-model" data-doc-section data-keywords="provider model id config credential auth base url endpoint route openai">
+        <p class="docs-eyebrow">PROVIDER MENTAL MODEL</p>
+        <h2>A provider is a named runtime route</h2>
+        <p>A provider tells Codex which protocol, endpoint, and authentication mode to use for the next model request. It is not a session, account, or secret. Sessions normally retain only a <code>model_provider</code> ID; the definition, credential, and network path are resolved separately when the session resumes.</p>
+        <figure class="provider-diagram" aria-labelledby="providerLayersCaption">
+          <div class="provider-chain">
+            <div class="provider-node"><small>History</small><strong>Session</strong><span>messages, tools, state</span></div><span class="provider-arrow" aria-hidden="true">→</span>
+            <div class="provider-node key"><small>Stored reference</small><strong>Provider ID</strong><span>for example <code>openai</code></span></div><span class="provider-arrow" aria-hidden="true">→</span>
+            <div class="provider-node"><small>Runtime resolution</small><strong>Provider definition</strong><span>protocol, base URL, policy</span></div><span class="provider-arrow" aria-hidden="true">→</span>
+            <div class="provider-node"><small>Resolved separately</small><strong>Auth and egress</strong><span>OAuth / API key / gateway</span></div>
+          </div>
+          <figcaption id="providerLayersCaption">A session stores the route name, not an immutable snapshot of the full route.</figcaption>
+        </figure>
+        <h3>The four layers</h3>
+        <div class="docs-table-wrap" role="region" aria-label="Four-layer provider model" tabindex="0"><table><thead><tr><th>Layer</th><th>Question answered</th><th>Copied during transfer?</th></tr></thead><tbody>
+          <tr><td><code>Provider ID</code></td><td>Which name does the session reference?</td><td>Fork or move sets it</td></tr>
+          <tr><td>Provider definition</td><td>Which protocol and address does that name mean?</td><td>No; configured independently</td></tr>
+          <tr><td>Credential</td><td>Who may call the service?</td><td>Never copied or backed up</td></tr>
+          <tr><td>Network route</td><td>Where does the request ultimately go now?</td><td>Resolved at runtime</td></tr>
+        </tbody></table></div>
+        <div class="docs-callout warning"><strong>IDs are case-sensitive</strong><p><code>openai</code> and <code>OpenAI</code> can be separate providers with different endpoints. Matching IDs on two hosts do not prove matching configuration, credentials, or upstream services.</p></div>
+        <h3>What happens when Codex resumes a session</h3>
+        <ol class="provider-timeline">
+          <li><span>1</span><div><strong>Read the session</strong><p>Obtain the <code>model_provider</code> ID from the rollout and SQLite index.</p></div></li>
+          <li><span>2</span><div><strong>Merge definitions</strong><p>Load built-in providers and merge <code>[model_providers.*]</code> configuration by exact ID.</p></div></li>
+          <li><span>3</span><div><strong>Resolve auth and egress</strong><p>Use the definition, auth mode, and explicit <code>base_url</code> to determine the request route.</p></div></li>
+          <li><span>4</span><div><strong>Request and append</strong><p>Call the model through the selected protocol and append new events; history still primarily records the provider ID.</p></div></li>
+        </ol>
+        <h3>Built-in and custom providers</h3>
+        <p>Codex includes an <code>openai</code> provider. ChatGPT login and API-key login can select different official endpoints when no URL is overridden. Custom providers commonly represent company gateways, compatible APIs, or local switching proxies. A historical session may also reference an ID that has since been removed from configuration.</p>
+        <pre><code>model_provider = "company-gateway"
+
+[model_providers.company-gateway]
+name = "Company Gateway"
+base_url = "https://gateway.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true</code></pre>
+        <figure class="route-compare" aria-labelledby="routeCompareCaption"><div><strong>Host A</strong><span>company-gateway</span><b aria-hidden="true">→</b><span>Gateway A</span></div><div><strong>Host B</strong><span>company-gateway</span><b aria-hidden="true">→</b><span>Gateway B</span></div><figcaption id="routeCompareCaption">The same provider ID can resolve to different egress routes on different hosts.</figcaption></figure>
+        <h3>How Codex Transfer applies this model</h3>
+        <p>Fork and move change the session's provider reference. They do not carry secrets or provider configuration. Before operating, verify the exact case-sensitive ID, endpoint, protocol, authentication, model aliases, tool availability, and writer-lock state on the destination host.</p>
+        <div class="docs-callout safe"><strong>Inspect routes in the workspace</strong><p>Hover or focus a provider, current route, target selector, or preflight route to see endpoint, protocol, auth mode, capabilities, retry policy, observed models, and session counts. The response uses a field allowlist and contains no credentials, tokens, header values, or query parameter values.</p></div>
+        <div class="docs-callout safe"><strong>Fork important sessions first</strong><p>Validate the actual target route while preserving the source. A provider ID alone cannot prove which account, upstream, or model implementation produced each historical turn, especially in a mixed-provider trace.</p></div>
+        <p>Repository reference: <a href="https://github.com/XieWeikai/codex-transfer/blob/main/docs/PROVIDERS.md">Understanding Codex Providers</a>.</p>
+      </article>
+
+      <article id="storage" data-doc-section data-keywords="jsonl sqlite model_provider session_meta state database">
+        <h2>Storage model</h2>
+        <p>Current Codex versions record the provider in both rollout <code>session_meta.payload.model_provider</code> and <code>state_5.sqlite.threads.model_provider</code>. A move coordinates both locations. A fork delegates creation of a complete new thread to Codex app-server.</p>
+        <table><thead><tr><th>Data</th><th>Responsibility</th><th>Operation</th></tr></thead><tbody><tr><td>rollout JSONL</td><td>Events, messages, and reasoning state</td><td>Atomic replacement for move; Codex creates forks</td></tr><tr><td>SQLite</td><td>List index, provider, project, and state</td><td>Transaction update or app-server write</td></tr><tr><td>Audit directory</td><td>Snapshots, manifest, SHA-256, and event chain</td><td>New generation for every write</td></tr></tbody></table>
+      </article>
+
+      <article id="fork" data-doc-section data-keywords="fork provider app server source preserve branch">
+        <h2>Fork to another provider</h2>
+        <p>Fork calls the official Codex <code>thread/fork</code> interface with a target <code>modelProvider</code>. Codex owns history copying, lineage, the new thread ID, rollout, and index writes. Codex Transfer owns preflight, snapshots, risk confirmation, and auditing.</p>
+        <ol><li>Confirm the source session has no writer.</li><li>Back up its rollout and a consistent SQLite snapshot.</li><li>Start a short-lived app-server for the same <code>CODEX_HOME</code>.</li><li>Call <code>thread/fork</code> and verify the new thread, provider, and path.</li><li>Record the new rollout hash so an unchanged fork can be removed during recovery.</li></ol>
+        <div class="docs-callout warning"><strong>Batch forks are not atomic</strong><p>Selected sessions are forked one at a time, each with an independent backup and audit entry. Completed forks remain if a later item fails.</p></div>
+        <div class="docs-callout warning"><strong>A fork is not a format conversion</strong><p>Historical <code>encrypted_content</code> remains intact and may not be decryptable by the target backend. The source session is unaffected.</p></div>
+      </article>
+
+      <article id="move" data-doc-section data-keywords="move migration rewrite original provider">
+        <h2>Move the original session</h2>
+        <p>After a complete backup, move atomically rewrites the rollout provider and updates the corresponding SQLite threads in a transaction. Failures trigger an attempt to restore the pre-move snapshot.</p>
+        <p>Move is appropriate when the original thread must appear under another provider. Recovery is strict: any post-move rollout or database change blocks automatic restoration.</p>
+      </article>
+
+      <article id="cross-host" data-doc-section data-keywords="ssh remote host desktop transfer fork path">
+        <h2>Cross-host fork and move</h2>
+        <p>Codex Transfer discovers SSH connections launched directly by Codex or ChatGPT Desktop whose command includes <code>codex app-server proxy</code>. Only currently open aliases with key-based login are listed; arbitrary SSH configuration is not scanned.</p>
+        <ol><li>Inspect the source rollout, writer lock, and SQLite integrity.</li><li>Store the source rollout and consistent database snapshots from both hosts in the local audit directory.</li><li>Stage the rollout under target <code>CODEX_HOME/imports/codex-transfer</code>.</li><li>Start an isolated remote app-server and use experimental <code>thread/fork.path</code> to create a new session ID.</li><li>Verify provider, rollout, and index. A move archives the source only after full target verification.</li></ol>
+        <div class="docs-callout warning"><strong>Credentials do not travel with sessions</strong><p>Configure API keys, OAuth, base URLs, model aliases, and provider definitions independently on the target. The target project must already exist as an absolute path on that host.</p></div>
+        <div class="docs-callout warning"><strong>This uses an experimental Codex interface</strong><p><code>thread/fork.path</code> can change between Codex versions. Keep the snapshot, test a fork first, and only then consider moving the source.</p></div>
+      </article>
+
+      <article id="archive" data-doc-section data-keywords="archive unarchive active lock writer visibility in use">
+        <h2>Archive and unarchive</h2>
+        <p>On the selected local or Desktop SSH host, Codex Transfer calls official <code>thread/archive</code> and <code>thread/unarchive</code>. Archive changes default-list visibility; it does not delete chat history or change the provider. Because Codex may move the rollout and update its SQLite path, both are backed up for every item.</p>
+        <ol><li>Close the Codex task you intend to change.</li><li>Use the archive or unarchive control on its card.</li><li>Check writer locks, archive state, and database integrity.</li><li>Enter <code>ARCHIVE</code> or <code>UNARCHIVE</code>.</li><li>Execute, verify, and audit each session independently.</li></ol>
+        <div class="docs-callout warning"><strong>Batch archive is not atomic</strong><p>Completed items remain if a later item fails. Each item has an independent snapshot and audit record.</p></div>
+        <h3>What “In use” means</h3>
+        <p>Codex Transfer attempts a non-blocking exclusive lock on <code>thread-writer-locks/&lt;session-id&gt;.lock</code>. Failure means another Codex process owns the exclusive writer. It may be actively running or merely loaded.</p>
+        <p>Closing a task removes the current subscription, but app-server unloads the recorder, emits <code>thread/closed</code>, and releases the lock only after the thread has had no subscribers and no activity for 30 continuous minutes.</p>
+        <div class="docs-callout warning"><strong>Forced takeover is unsafe</strong><p>Deleting the <code>.lock</code> path does not revoke the kernel lock on the old inode and could let a second writer lock a new inode. <code>thread/unsubscribe</code> can only remove the caller's own subscription. Codex Transfer neither deletes live locks nor terminates their processes.</p></div>
+        <h3>Live updates without polling</h3>
+        <p>The local host uses native <code>kqueue</code> file events and SSE. Lock changes read only a lightweight snapshot. Bursts of SQLite/WAL writes are coalesced, and ordinary chat appends are filtered unless visible workspace metadata changed. Hidden pages pause refresh and synchronize once when visible again.</p>
+        <p>Existing Desktop SSH proxies do not forward remote file events. Remote hosts refresh on host selection, visibility return, explicit refresh, and completion of a Codex Transfer operation, avoiding permanent remote scans.</p>
+      </article>
+
+      <article id="recovery" data-doc-section data-keywords="backup restore audit hash divergence undo">
+        <h2>Backup, audit, and recovery</h2>
+        <p>The operation manifest records input sessions, target provider, risks, file paths, backup locations, and before/after hashes. Audit JSONL links each event to the previous event hash so accidental modification can be detected.</p>
+        <h3>Three meanings of recovery</h3>
+        <dl class="docs-definitions"><dt>Byte recovery</dt><dd>Restore files and database rows to an old snapshot, potentially discarding later changes.</dd><dt>Functional recovery</dt><dd>Resume the session successfully; this depends on credentials, models, and backend compatibility and cannot be guaranteed.</dd><dt>Provenance recovery</dt><dd>Reconstruct the provider used for every turn; traces do not reliably retain this information, so it cannot be automated completely.</dd></dl>
+      </article>
+
+      <article id="risk" data-doc-section data-keywords="risk encrypted_content credential mixed trace provenance">
+        <h2>Risk model</h2>
+        <table><thead><tr><th>Risk</th><th>Why it happens</th><th>Codex Transfer response</th></tr></thead><tbody><tr><td>Encrypted reasoning is not portable</td><td>The backend creates opaque <code>encrypted_content</code></td><td>Count and warn before confirmation</td></tr><tr><td>Missing target credentials</td><td>A provider label contains no authentication</td><td>Never handle secrets; require separate setup</td></tr><tr><td>Mixed provenance is unrecoverable</td><td>No reliable per-turn provider field exists</td><td>Warn explicitly; never claim lossless provenance</td></tr><tr><td>Concurrent writing</td><td>Codex and the tool modify the same state</td><td>Require a non-blocking exclusive writer lock</td></tr><tr><td>Recovery overwrites new chat</td><td>State diverged after the operation</td><td>Compare hashes and block automatic restore</td></tr></tbody></table>
+      </article>
+
+      <article id="install" data-doc-section data-keywords="install terminal command ct codex transfer python">
+        <h2>Install and run</h2>
+        <pre><code>./install.sh
+codex-transfer
+
+# Short alias
+ct</code></pre>
+        <p>The installer requires Python 3.11+, creates an isolated environment, and provides both commands under <code>~/.local/bin</code>. It does not overwrite a regular file with the same name. The default service address is <code>http://127.0.0.1:8765</code>.</p>
+        <pre><code>codex-transfer \
+  --codex-home /path/to/.codex \
+  --data-dir /private/backup/path \
+  --codex-bin /path/to/codex \
+  --port 8765</code></pre>
+      </article>
+
+      <article id="limits" data-doc-section data-keywords="limits remote project schema signature">
+        <h2>Limitations</h2>
+        <ul><li>Codex local storage and experimental app-server fields can change between releases; unknown structures must be rejected.</li><li>Only SSH proxies currently opened by local Desktop can be discovered. A relay launched only on a remote host cannot expose that host back to this tool.</li><li>Cross-host transfer creates a new target Session ID; it does not automatically attach a CLI-created session to Desktop remote-project metadata.</li><li>The hash chain detects accidental modification but is not a signature. An attacker with filesystem write access can rewrite logs and backups.</li><li>Backups contain complete chats and tool output. Keep them on private storage and apply your own retention policy.</li></ul>
+      </article>
+
+      <p class="docs-empty" id="docsEmpty" hidden>No matching documentation.</p>
+    </main>
+
+    <aside class="docs-toc" aria-label="On this page"><span>On this page</span><a href="#provider-model">Provider</a><a href="#fork">Fork</a><a href="#archive">Archive</a><a href="#recovery">Recovery</a><a href="#risk">Risk</a><a href="#install">Install</a></aside>
+  </div>
+  <script src="/docs.js"></script>
+</body>
+</html>

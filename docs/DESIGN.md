@@ -96,3 +96,9 @@ Large inventories are kept responsive by treating the grid as a stable view. Ses
 Risk guidance is contextual. Warnings are shown only after preflight and immediately before the requested mutation. Fork, migration, archive, unarchive, and restore require the matching explicit confirmation phrase (`FORK`, `MIGRATE`, `ARCHIVE`, `UNARCHIVE`, or `RESTORE`). The execute control stays disabled until the acknowledgement and server-side preflight result are satisfied.
 
 The visual system uses neutral graphite surfaces for dense operational data, green for the primary migration path, amber for cautions, red for destructive or blocked states, and blue/cyan only for secondary information. Layout decisions came from the actual provider-to-session-to-operation workflow; the installed `ui-ux-pro-max` skill supplied accessibility, interaction-target, typography, responsiveness, and reduced-motion checks rather than dictating an unrelated page template.
+
+### Event-driven workspace seam
+
+`WorkspaceChangeMonitor` is the single interface between Codex-home change detection and HTTP clients. Its implementation owns native `kqueue` descriptors, burst coalescing, monotonically increasing revisions, and subscriber wakeups. The SSE handler only waits for revisions, while the browser decides whether a lock-only refresh or a workspace refresh is required. This keeps platform details and event-rate control local to one deep module.
+
+The event stream carries only a revision and change kind, never Session contents. Local changes are automatic. Remote Desktop SSH adapters remain pull-based because the already-running proxy does not expose a multiplexed filesystem-event channel; they refresh on user and operation events rather than a background polling loop.

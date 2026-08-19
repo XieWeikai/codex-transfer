@@ -71,7 +71,17 @@ Cross-host Move creates and verifies a new target thread before archiving the so
 
 Codex Transfer checks `thread-writer-locks/<session-id>.lock`. If the file is absent, the session is not locked. If it exists, Codex Transfer attempts a non-blocking exclusive `flock`: success means the file is stale or idle and the session is safe; failure means another Codex process owns the writer lock and every mutation is blocked. On platforms without `flock`, an existing lock file is treated conservatively as active.
 
-This detects write ownership, not human attention. A session can be visible in an idle UI tab without holding the lock. Recent `updated_at` timestamps and process-name matching are not used because they cannot establish exclusive write safety.
+Current Codex acquires the writer lock when `resume_thread` installs a live recorder. Closing a UI task unsubscribes the client but does not immediately unload that recorder. App-server waits until there have been no subscribers and no thread activity for 30 minutes, then emits `thread/closed`, drops the recorder, and releases the writer lock. Closing the entire owning app-server releases its locks sooner, but also affects every thread loaded by that process.
+
+Do not delete or replace a lock file to force access. File locks are attached to an open file description/inode; deleting the pathname does not revoke the old process's kernel lock and may let a second writer lock a newly created file. Codex Transfer intentionally provides no force-takeover action.
+
+## Live workspace updates
+
+On macOS, Codex Transfer watches the local Codex home with `kqueue` and delivers small revision events to the browser with Server-Sent Events. Writer-lock directory changes trigger a lock-only refresh. SQLite, WAL, configuration, rename, and archive bursts are coalesced, then compared against a UI-visible metadata fingerprint before any workspace refresh. Ordinary message appends are filtered out. Hidden pages defer work until visible, so live updates do not turn into a full-workspace polling loop.
+
+An existing Codex Desktop SSH proxy does not expose remote filesystem notifications to this process. Remote workspaces therefore refresh when selected, when the browser returns to the foreground, after a Codex Transfer operation, or when the user presses Refresh. This avoids permanent background SSH scanners.
+
+This detects write ownership, not human attention. Merely listing a session does not acquire the lock, but opening or resuming it does; once loaded, it can remain locked while idle until the unload delay expires. Recent `updated_at` timestamps and process-name matching are not used because they cannot establish exclusive write safety.
 
 ## Fork workflow
 

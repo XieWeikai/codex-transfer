@@ -19,9 +19,11 @@
       </div>
     </div>
     <div class="header-actions">
+      <div class="sync-state" id="liveSyncStatus" role="status" aria-atomic="true" title="本机 Session 状态通过文件事件自动更新"><span></span><strong>连接实时状态</strong></div>
       <div class="health-pill" id="health"><span></span><strong>检查中</strong></div>
       <label class="theme-control"><span>主题</span><select id="themeSelect" aria-label="界面主题"><option value="graphite">石墨</option><option value="cloud">云白</option><option value="contrast">高对比</option></select></label>
-      <a class="button button-quiet header-link" href="/docs">文档</a>
+      <label class="language-control"><span>语言</span><select id="languageSelect" aria-label="界面语言" data-i18n-skip><option value="zh-CN">中文</option><option value="en">English</option></select></label>
+      <a class="button button-quiet header-link" id="docsLink" href="/docs">文档</a>
       <button class="button button-quiet" id="openHistory" type="button">
         操作记录 <span class="count-badge" id="operationCount">0</span>
       </button>
@@ -47,7 +49,7 @@
     <section class="session-workspace">
       <div class="workspace-titlebar">
         <div>
-          <div class="eyebrow"><span id="currentProviderDot"></span><span id="currentProviderLabel">全部会话</span></div>
+          <div class="eyebrow provider-inspect" id="currentProviderInspect" tabindex="0"><span id="currentProviderDot"></span><span id="currentProviderLabel">全部会话</span></div>
           <h2>Session 工作台</h2>
         </div>
         <div class="workspace-summary">
@@ -83,7 +85,7 @@
         <div class="segmented" aria-label="会话状态筛选">
           <button type="button" class="segment active" data-filter="all" aria-pressed="true">全部</button>
           <button type="button" class="segment" data-filter="ready" aria-pressed="false">可迁移</button>
-          <button type="button" class="segment" data-filter="locked" aria-pressed="false">使用中</button>
+          <button type="button" class="segment" data-filter="locked" aria-pressed="false">占用</button>
           <button type="button" class="segment" data-filter="archived" aria-pressed="false">已归档</button>
         </div>
         <label class="select-all"><input type="checkbox" id="selectAll"> 选择当前结果</label>
@@ -154,6 +156,10 @@
     <div id="sessionPopoverContent"></div>
   </aside>
 
+  <aside id="providerPopover" class="provider-popover" role="tooltip" aria-hidden="true">
+    <div id="providerPopoverContent"></div>
+  </aside>
+
   <div class="drawer-scrim" id="drawerScrim" hidden></div>
   <aside class="history-drawer" id="historyDrawer" aria-labelledby="historyTitle" aria-hidden="true">
     <div class="drawer-header">
@@ -215,6 +221,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/i18n.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

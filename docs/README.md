@@ -10,6 +10,7 @@ Codex Transfer manages Codex session placement on this Mac and Codex Desktop-con
 Read these documents before operating on important sessions:
 
 - [Architecture and storage model](DESIGN.md)
+- [Understanding Codex providers](PROVIDERS.md) ([简体中文](PROVIDERS_ZH.md))
 - [Risk model and recovery guarantees](SAFETY.md)
 - [Installation and operating procedures](OPERATIONS.md)
 

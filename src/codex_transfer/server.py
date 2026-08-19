@@ -6,8 +6,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
+from .change_monitor import WorkspaceChangeMonitor
 from .engine import MigrationEngine, MigrationError
 from .fleet import FleetError
 from .repository import RepositoryError
@@ -17,19 +18,34 @@ class CodexTransferServer(ThreadingHTTPServer):
     def __init__(self, address, engine: MigrationEngine):
         self.engine = engine
         self.csrf_token = secrets.token_urlsafe(32)
+        self.changes = WorkspaceChangeMonitor(
+            engine.repository.home,
+            workspace_fingerprint=engine.repository.workspace_fingerprint,
+        )
         super().__init__(address, CodexTransferHandler)
+        self.changes.start()
+
+    def server_close(self) -> None:
+        self.changes.close()
+        super().server_close()
 
 
 class CodexTransferHandler(BaseHTTPRequestHandler):
     server: CodexTransferServer
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
             if path == "/api/status":
                 self._json(self.server.engine.status())
             elif path == "/api/workspace":
-                self._json(self.server.engine.workspace_snapshot())
+                fresh = parse_qs(parsed.query).get("fresh", ["0"])[0] == "1"
+                self._json(self.server.engine.workspace_snapshot(wait_for_remote=fresh))
+            elif path == "/api/events":
+                self._event_stream()
+            elif path == "/api/session-locks":
+                self._json({"locks": self.server.engine.repository.lock_snapshot()})
             elif path == "/api/hosts":
                 self._json(self.server.engine.host_snapshot())
             elif path == "/api/sessions":
@@ -45,10 +61,14 @@ class CodexTransferHandler(BaseHTTPRequestHandler):
                     b"__CSRF_TOKEN__", self.server.csrf_token.encode("ascii")
                 )
                 self._bytes(content, "text/html; charset=utf-8")
-            elif path in ("/docs", "/docs/"):
+            elif path in ("/docs", "/docs/", "/docs/zh"):
                 self._bytes(self._static("docs.html"), "text/html; charset=utf-8")
+            elif path in ("/docs/en", "/docs/en/"):
+                self._bytes(self._static("docs_en.html"), "text/html; charset=utf-8")
             elif path == "/app.js":
                 self._bytes(self._static("app.js"), "text/javascript; charset=utf-8")
+            elif path == "/i18n.js":
+                self._bytes(self._static("i18n.js"), "text/javascript; charset=utf-8")
             elif path == "/docs.js":
                 self._bytes(self._static("docs.js"), "text/javascript; charset=utf-8")
             elif path == "/styles.css":
@@ -140,6 +160,7 @@ class CodexTransferHandler(BaseHTTPRequestHandler):
                 self._error(HTTPStatus.NOT_FOUND, "Not found")
                 return
             self._json(result)
+            self.server.changes.publish("workspace")
         except Exception as exc:
             self._handle_exception(exc)
 
@@ -147,6 +168,9 @@ class CodexTransferHandler(BaseHTTPRequestHandler):
         print(f"[web] {self.address_string()} {format % args}")
 
     def _handle_exception(self, exc: Exception) -> None:
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            self.close_connection = True
+            return
         if isinstance(exc, (MigrationError, FleetError, RepositoryError, ValueError)):
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         else:
@@ -181,6 +205,39 @@ class CodexTransferHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(content)
+
+    def _event_stream(self) -> None:
+        try:
+            revision = int(self.headers.get("Last-Event-ID", "0"))
+        except ValueError:
+            revision = 0
+        if revision > self.server.changes.revision:
+            revision = 0
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        self.wfile.write(
+            f"event: ready\ndata: {{\"native\": {str(self.server.changes.native).lower()}}}\n\n".encode()
+        )
+        self.wfile.flush()
+        while True:
+            change = self.server.changes.wait(revision, timeout=20)
+            try:
+                if change is None:
+                    self.wfile.write(b": keepalive\n\n")
+                else:
+                    revision = change.revision
+                    payload = json.dumps({"kind": change.kind}, separators=(",", ":"))
+                    self.wfile.write(
+                        f"id: {revision}\nevent: change\ndata: {payload}\n\n".encode()
+                    )
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+                return
 
     @staticmethod
     def _static(name: str) -> bytes:

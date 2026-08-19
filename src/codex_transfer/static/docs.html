@@ -15,6 +15,7 @@
     <label class="docs-search"><span>搜索</span><input id="docsSearch" type="search" placeholder="搜索原理、Fork、归档、恢复或安装" aria-label="搜索文档"></label>
     <div class="docs-header-actions">
       <label class="theme-control"><span>主题</span><select id="themeSelect" aria-label="界面主题"><option value="graphite">石墨</option><option value="cloud">云白</option><option value="contrast">高对比</option></select></label>
+      <label class="language-control"><span>语言</span><select id="docsLanguageSelect" aria-label="文档语言"><option value="zh-CN">中文</option><option value="en">English</option></select></label>
       <a class="button button-primary header-link" href="/">打开工作台</a>
     </div>
   </header>
@@ -24,6 +25,7 @@
       <span class="docs-nav-label">开始</span>
       <a href="#overview">概览</a>
       <a href="#mental-model">核心原理</a>
+      <a href="#provider-model">Provider 原理</a>
       <a href="#storage">存储模型</a>
       <span class="docs-nav-label">操作</span>
       <a href="#fork">Fork 到 Provider</a>
@@ -54,6 +56,65 @@
         <h3>Provider 标识不等于凭据</h3>
         <p><code>model_provider</code> 是路由和列表分桶标识。API Key、OAuth、Base URL 与模型映射存在于独立配置中，Codex Transfer 从不复制或备份它们。</p>
         <div class="docs-callout safe"><strong>大列表按需读取</strong><p>工作台首屏只读取 Session 摘要，超长标题会截断；将鼠标停在卡片上或点开详情后，才会读取完整标题。选择 Session 时只更新相关卡片和队列，不会重新创建整个网格。</p></div>
+      </article>
+
+      <article id="provider-model" data-doc-section data-keywords="provider model provider id config credential auth base url endpoint route openai 大小写 凭据 路由">
+        <p class="docs-eyebrow">PROVIDER MENTAL MODEL</p>
+        <h2>Provider 是一条有名字的运行时路线</h2>
+        <p>Provider 告诉 Codex 用什么协议、哪个地址和哪种认证方式发送下一次模型请求。它不是 Session、账号或密钥。Session 通常只记住 <code>model_provider</code> 这个 ID；具体定义、凭据和网络出口在恢复 Session 时才分别解析。</p>
+
+        <figure class="provider-diagram" aria-labelledby="providerLayersCaption">
+          <div class="provider-chain">
+            <div class="provider-node"><small>历史数据</small><strong>Session</strong><span>消息、工具输出、状态</span></div>
+            <span class="provider-arrow" aria-hidden="true">→</span>
+            <div class="provider-node key"><small>持久化引用</small><strong>Provider ID</strong><span>例如 <code>openai</code></span></div>
+            <span class="provider-arrow" aria-hidden="true">→</span>
+            <div class="provider-node"><small>运行时解析</small><strong>Provider 定义</strong><span>协议、Base URL、策略</span></div>
+            <span class="provider-arrow" aria-hidden="true">→</span>
+            <div class="provider-node"><small>独立取得</small><strong>认证与出口</strong><span>OAuth / API Key / 网关</span></div>
+          </div>
+          <figcaption id="providerLayersCaption">Session 保存的是路线名称，不是整条路线的不可变快照。</figcaption>
+        </figure>
+
+        <h3>必须分清的四层</h3>
+        <div class="docs-table-wrap" role="region" aria-label="Provider 四层模型" tabindex="0"><table><thead><tr><th>层次</th><th>回答的问题</th><th>迁移时是否复制</th></tr></thead><tbody>
+          <tr><td><code>Provider ID</code></td><td>Session 要引用哪个名字？</td><td>Fork 或 Move 会设置它</td></tr>
+          <tr><td>Provider 定义</td><td>这个名字对应什么协议和地址？</td><td>不复制，目标主机独立配置</td></tr>
+          <tr><td>认证凭据</td><td>谁有权调用这个服务？</td><td>不复制、不备份</td></tr>
+          <tr><td>实际网络路线</td><td>请求此刻最终去了哪里？</td><td>运行时决定，可能随时间变化</td></tr>
+        </tbody></table></div>
+
+        <div class="docs-callout warning"><strong>ID 区分大小写</strong><p><code>openai</code> 与 <code>OpenAI</code> 可以是两个不同 Provider，指向完全不同的地址。跨主机存在同名 ID，也不代表两端配置、凭据或上游相同。</p></div>
+
+        <h3>Codex 恢复 Session 时发生什么</h3>
+        <ol class="provider-timeline">
+          <li><span>1</span><div><strong>读取 Session</strong><p>从 rollout 与 SQLite 索引中取得 <code>model_provider</code> ID。</p></div></li>
+          <li><span>2</span><div><strong>合并定义</strong><p>加载内置 Provider，再按精确 ID 合并 <code>[model_providers.*]</code> 配置。</p></div></li>
+          <li><span>3</span><div><strong>解析认证和出口</strong><p>根据 Provider 定义、认证模式和显式 <code>base_url</code> 确定请求路线。</p></div></li>
+          <li><span>4</span><div><strong>发送请求并续写</strong><p>通过相应协议调用模型，随后把新事件写回 Session；历史仍主要保留 Provider ID。</p></div></li>
+        </ol>
+
+        <h3>内置与自定义</h3>
+        <p>Codex 内置 <code>openai</code> Provider。未显式覆盖地址时，ChatGPT 登录与 API Key 登录会选择不同的官方出口。自定义 Provider 常用于企业网关、兼容 API 或本地切换代理。历史 Session 还可能保留一个已从配置删除的 ID：工作台能显示它，不代表它现在一定可以恢复。</p>
+        <pre><code>model_provider = "company-gateway"
+
+[model_providers.company-gateway]
+name = "Company Gateway"
+base_url = "https://gateway.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true</code></pre>
+
+        <figure class="route-compare" aria-labelledby="routeCompareCaption">
+          <div><strong>主机 A</strong><span>company-gateway</span><b aria-hidden="true">→</b><span>网关 A</span></div>
+          <div><strong>主机 B</strong><span>company-gateway</span><b aria-hidden="true">→</b><span>网关 B</span></div>
+          <figcaption id="routeCompareCaption">同一个 Provider ID 在不同主机上可以解析到不同出口。</figcaption>
+        </figure>
+
+        <h3>Codex Transfer 应怎样使用这个模型</h3>
+        <p>Fork 或 Move 改变的是 Session 的 Provider 引用，不会把密钥和 Provider 配置一起带走。操作前应确认目标主机存在大小写完全一致的 ID、地址和协议符合预期、认证有效、模型别名与工具可用，并确认 Session 未被写锁占用。</p>
+        <div class="docs-callout safe"><strong>工作台可直接检查路线</strong><p>鼠标悬浮或键盘聚焦左侧 Provider、当前路线、目标 Provider 下拉框或预检路线，可以查看对应主机上的 Endpoint、协议、认证方式、能力、重试设置、已观察模型和 Session 数量。详情响应使用字段白名单，不包含凭据、Token、Header 值或查询参数值。</p></div>
+        <div class="docs-callout safe"><strong>重要 Session 优先 Fork</strong><p>先保留源 Session，在目标路线实际恢复并验证。Provider ID 只能证明记录过哪个名字，不能单独证明历史中每一轮实际使用的账号、上游或模型实现；混合 Provider 的逐轮来源也可能无法完整重建。</p></div>
+        <p>仓库参考文档：<a href="https://github.com/XieWeikai/codex-transfer/blob/main/docs/PROVIDERS_ZH.md">理解 Codex Provider</a>。</p>
       </article>
 
       <article id="storage" data-doc-section data-keywords="jsonl sqlite model_provider session_meta state database">
@@ -88,14 +149,18 @@
         <div class="docs-callout warning"><strong>这是实验性 Codex 接口</strong><p><code>thread/fork.path</code> 可能随 Codex 版本变化。两端版本不兼容时预检或导入会失败；保留审计快照，先 Fork 验证，再考虑 Move。</p></div>
       </article>
 
-      <article id="archive" data-doc-section data-keywords="archive unarchive active lock writer visibility 归档 使用中">
+      <article id="archive" data-doc-section data-keywords="archive unarchive active lock writer visibility 归档 占用">
         <h2>归档与还原归档</h2>
         <p>Codex Transfer 在当前选择的本机或 Desktop SSH 主机上调用 Codex 官方 <code>thread/archive</code> 与 <code>thread/unarchive</code>。归档只改变默认列表中的可见状态，不删除聊天历史，也不改变 Provider；Codex 可能同时移动 rollout 并更新 SQLite 路径，因此每条操作仍会先把两者备份到本地审计目录。</p>
         <ol><li>关闭准备操作的 Codex 任务。</li><li>在 Session 卡片上点击归档或还原归档图标。</li><li>检查远程 writer lock、当前归档状态和数据库完整性。</li><li>输入 <code>ARCHIVE</code> 或 <code>UNARCHIVE</code>。</li><li>操作独立执行、验证并写入带主机 ID 的审计记录。</li></ol>
         <div class="docs-callout warning"><strong>批量归档不是原子事务</strong><p>中途失败时，已完成条目会保留，后续条目停止。每条都有独立快照，可以从操作记录定位恢复依据。</p></div>
-        <h3>如何判断 Session 正在使用</h3>
-        <p>Codex Transfer 检查 <code>thread-writer-locks/&lt;session-id&gt;.lock</code>，并尝试取得非阻塞独占锁。拿不到锁说明其他 Codex 进程拥有写权限，此时所有修改都会被阻断；能取得锁则说明即使锁文件存在，它当前也没有被持有。</p>
-        <p>这是写入安全信号，不是最近活跃度。空闲 UI 标签页可能仍开着但没有持锁；更新时间和进程名都不能可靠证明独占写状态。</p>
+        <h3>“占用”到底表示什么</h3>
+        <p>Codex Transfer 检查 <code>thread-writer-locks/&lt;session-id&gt;.lock</code>，并尝试取得非阻塞独占锁。拿不到锁说明另一个 Codex 进程拥有独占写入权，此时所有修改都会被阻断。它可能正在运行，也可能只是已经加载。</p>
+        <p>当前 Codex 在恢复 Session 时取得 writer lock。关闭任务只会取消当前订阅；app-server 要等“没有订阅者且没有活动”同时持续 30 分钟，才卸载 recorder、发出 <code>thread/closed</code> 并释放锁。</p>
+        <div class="docs-callout warning"><strong>不能安全强制抢占</strong><p>删除 <code>.lock</code> 路径不会撤销旧进程持有的内核锁，反而可能让第二个 writer 锁住新 inode。<code>thread/unsubscribe</code> 也只能取消调用方自己的订阅。Codex Transfer 不删除活锁、不终止占用进程。</p></div>
+        <h3>实时更新如何避免卡顿</h3>
+        <p>本机使用原生 <code>kqueue</code> 文件事件和 SSE。锁目录变化只读取轻量锁快照；SQLite/WAL 连续写入会先静默合并，并且只有界面可见元数据变化时才刷新工作区，普通对话追加会被过滤。页面隐藏时暂停刷新，重新可见后只同步一次，不运行周期性全量轮询。</p>
+        <p>Desktop 的既有 SSH proxy 不会转发远端文件事件，因此远端主机在选择主机、窗口重新可见、手动刷新和 Codex Transfer 操作完成时刷新，避免常驻远端扫描。</p>
       </article>
 
       <article id="recovery" data-doc-section data-keywords="backup restore audit hash divergence undo">
@@ -139,7 +204,7 @@ ct</code></pre>
       <p class="docs-empty" id="docsEmpty" hidden>没有匹配的文档内容。</p>
     </main>
 
-    <aside class="docs-toc" aria-label="本页目录"><span>本页</span><a href="#mental-model">核心原理</a><a href="#fork">Fork</a><a href="#archive">归档</a><a href="#recovery">恢复</a><a href="#risk">风险</a><a href="#install">安装</a></aside>
+    <aside class="docs-toc" aria-label="本页目录"><span>本页</span><a href="#provider-model">Provider</a><a href="#fork">Fork</a><a href="#archive">归档</a><a href="#recovery">恢复</a><a href="#risk">风险</a><a href="#install">安装</a></aside>
   </div>
   <script src="/docs.js"></script>
 </body>

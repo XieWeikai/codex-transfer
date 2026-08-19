@@ -62,6 +62,7 @@ class MigrationEngine:
             "session_count": len(sessions),
             "locked_session_count": sum(session.locked for session in sessions),
             "providers": self.repository.provider_ids(sessions),
+            "provider_details": self.repository.provider_details(sessions),
             "audit_chain_valid": self.audit.verify_chain(),
         }
 
@@ -160,7 +161,7 @@ class MigrationEngine:
                     Risk(
                         "critical",
                         "session-active",
-                        f"会话 {session.id} 正被 Codex 写入。",
+                        f"会话 {session.id} 的独占 writer lock 正被 Codex 持有。",
                         "关闭或停止该 Codex 任务，然后重新运行预检。",
                     )
                 )
@@ -317,7 +318,7 @@ class MigrationEngine:
                     Risk(
                         "critical",
                         "session-active",
-                        f"会话 {session.id} 正被 Codex 写入。",
+                        f"会话 {session.id} 的独占 writer lock 正被 Codex 持有。",
                         "关闭或停止该 Codex 任务，然后重新运行预检。",
                     )
                 )
@@ -641,7 +642,7 @@ class MigrationEngine:
                 Risk(
                     "critical",
                     "session-active",
-                    "相关会话正在被 Codex 写入。",
+                    "相关会话的独占 writer lock 正被 Codex 持有。",
                     "关闭这些任务后重新检查：" + ", ".join(locked),
                 )
             )

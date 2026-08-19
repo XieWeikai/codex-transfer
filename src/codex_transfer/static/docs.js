@@ -1,6 +1,7 @@
 const docsSections = [...document.querySelectorAll("[data-doc-section]")];
 const docsSearch = document.querySelector("#docsSearch");
 const themeSelect = document.querySelector("#themeSelect");
+const languageSelect = document.querySelector("#docsLanguageSelect");
 
 function applyDocsTheme(theme) {
   const allowed = ["graphite", "cloud", "contrast"];
@@ -35,5 +36,10 @@ function updateActiveNavigation() {
 applyDocsTheme(localStorage.getItem("codex-transfer-theme") || "graphite");
 docsSearch.addEventListener("input", filterDocs);
 themeSelect.addEventListener("change", event => applyDocsTheme(event.target.value));
+languageSelect.value = document.documentElement.lang === "en" ? "en" : "zh-CN";
+languageSelect.addEventListener("change", event => {
+  localStorage.setItem("codex-transfer-locale", event.target.value);
+  window.location.href = event.target.value === "en" ? "/docs/en" : "/docs";
+});
 document.addEventListener("scroll", updateActiveNavigation, {passive: true});
 updateActiveNavigation();

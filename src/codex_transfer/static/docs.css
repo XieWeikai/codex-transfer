@@ -34,6 +34,27 @@
 .docs-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 24px 0; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .docs-flow span { padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
 .docs-flow b { color: var(--accent); }
+.provider-diagram, .route-compare { margin: 28px 0; }
+.provider-chain { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 8px; }
+.provider-node { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.provider-node.key { border-color: var(--accent); }
+.provider-node small { color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; }
+.provider-node strong { color: var(--text); font-size: 14px; }
+.provider-node span { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.provider-arrow { align-self: center; color: var(--accent); font-size: 18px; }
+.provider-diagram figcaption, .route-compare figcaption { margin-top: 10px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.docs-table-wrap { max-width: 100%; overflow-x: auto; }
+.provider-timeline { margin: 24px 0; padding: 0; list-style: none; }
+.provider-timeline li { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 12px; padding: 0 0 22px; }
+.provider-timeline li:not(:last-child)::after { content: ""; position: absolute; left: 15px; top: 34px; bottom: 3px; width: 1px; background: var(--line-strong); }
+.provider-timeline li > span { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font-family: var(--font-mono); font-size: 12px; }
+.provider-timeline strong { color: var(--text); font-size: 14px; }
+.provider-timeline p { margin: 2px 0 0; }
+.route-compare { padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.route-compare > div { display: grid; grid-template-columns: 72px minmax(0, 1fr) 24px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 42px; }
+.route-compare strong { color: var(--text); font-size: 13px; }
+.route-compare span { padding: 7px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.route-compare b { color: var(--accent); text-align: center; }
 .docs-content table { width: 100%; margin: 20px 0; border-collapse: collapse; font-size: 13px; }
 .docs-content th, .docs-content td { padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .docs-content th { color: var(--text); font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; }
@@ -51,6 +72,7 @@
   .docs-header { grid-template-columns: 1fr auto; padding: 9px 12px; }
   .docs-search { grid-column: 1 / -1; grid-row: 2; }
   .docs-header-actions .theme-control { display: none; }
+  .docs-header-actions .language-control > span { display: none; }
   .docs-layout { display: block; padding: 24px 16px 72px; }
   .docs-sidebar { position: static; display: flex; gap: 4px; margin: 0 0 36px; padding-bottom: 8px; overflow-x: auto; }
   .docs-sidebar { scrollbar-width: none; }
@@ -59,5 +81,10 @@
   .docs-sidebar a { min-width: max-content; border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .docs-content h1 { font-size: 38px; }
   .docs-content p, .docs-content li, .docs-content dd { font-size: 16px; }
-  .docs-content table { display: block; overflow-x: auto; }
+  .docs-content article > table { display: block; overflow-x: auto; }
+  .docs-table-wrap table { min-width: 620px; }
+  .provider-chain { grid-template-columns: 1fr; }
+  .provider-arrow { transform: rotate(90deg); justify-self: center; }
+  .route-compare > div { grid-template-columns: 64px minmax(0, 1fr); padding: 8px 0; }
+  .route-compare b { display: none; }
 }

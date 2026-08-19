@@ -13,6 +13,7 @@ from codex_transfer.audit import AuditStore
 from codex_transfer.fleet import DesktopSshDiscovery, HostDescriptor, HostFleet
 from codex_transfer.model import Session
 from codex_transfer.repository import CodexRepository
+from codex_transfer.providers import provider_catalog
 
 
 class FakeHost:
@@ -27,6 +28,14 @@ class FakeHost:
 
     def provider_ids(self):
         return sorted(self.providers)
+
+    def provider_details(self, sessions):
+        return provider_catalog(
+            {"model_providers": {provider: {} for provider in self.providers}},
+            sessions,
+            host_id=self.descriptor.id,
+            config_source=f"/{self.descriptor.id}/config.toml",
+        )
 
     def fetch_rollout(self, path):
         return self.payloads[path]

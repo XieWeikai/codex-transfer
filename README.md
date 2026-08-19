@@ -9,7 +9,7 @@
 [![Loopback UI](https://img.shields.io/badge/web%20UI-loopback%20only-4c956c)](#security-model)
 [![Runtime](https://img.shields.io/badge/runtime-stdlib%20only-2f855a)](#development)
 
-English | [简体中文](README_ZH.md) · [Documentation](docs/README.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+English | [简体中文](README_ZH.md) · [Documentation](docs/README.md) · [Providers](docs/PROVIDERS.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -34,6 +34,7 @@ Moving a Codex session is not a file rename. Current Codex discovery uses both r
 | Backup generations | Preserve rollout files, consistent SQLite snapshots, manifests, and SHA-256 values for every write. |
 | Conflict-aware recovery | Refuse automatic restore or fork removal when later conversation data would be overwritten. |
 | Large-workspace UI | Load bounded summaries, fetch long titles on demand, and update selections without rebuilding the grid. |
+| Event-driven updates | Use native filesystem events and SSE for local lock, rename, archive, and session changes without periodic workspace polling. |
 
 ## How it works
 
@@ -52,7 +53,7 @@ Codex home
 - **Archive / Unarchive** use Codex app-server `thread/archive` and `thread/unarchive` on the selected local or remote host; they change visibility, not history or Provider.
 - **Restore** is a new audited operation. It proceeds only when current hashes still match the recorded post-state.
 
-Credentials, API keys, OAuth state, provider definitions, base URLs, and model aliases are never copied or stored by Codex Transfer.
+Credentials, API keys, OAuth state, provider definitions, base URLs, and model aliases are never copied or stored by Codex Transfer. See [Understanding Codex Providers](docs/PROVIDERS.md) for the complete routing model and cross-host implications.
 
 ## Quick start
 
@@ -146,7 +147,11 @@ ct restore --operation OPERATION_ID --acknowledge RESTORE --json
 
 Preview commands never write session state. Write commands rerun preflight, create the same backups and audit records as the Web UI, and require the same explicit confirmation words.
 
-A session is reported as `locked` when Codex Transfer cannot acquire a non-blocking exclusive lock on `thread-writer-locks/<session-id>.lock`. This is a write-safety signal, not a recent-activity heuristic: an idle UI tab may be open without being locked, while a held writer lock always blocks mutations.
+A session is reported as `locked` when Codex Transfer cannot acquire a non-blocking exclusive lock on `thread-writer-locks/<session-id>.lock`. Current Codex acquires this lock when a thread is resumed and keeps it while the in-memory recorder remains loaded. After the final client unsubscribes, app-server waits until the thread has had no subscribers and no activity for 30 minutes before unloading it. The lock therefore means “Codex owns exclusive write access,” not necessarily “a model turn is running.”
+
+The Web UI receives local changes through native filesystem events and Server-Sent Events. Lock changes use a small lock-only endpoint; SQLite/WAL bursts wait for a short quiet period and trigger a workspace refresh only when UI-visible metadata changed. Ordinary message appends are filtered out, and there is no recurring full-workspace poll. Remote hosts cannot expose their filesystem events through an existing Desktop SSH proxy, so they refresh on host selection, window focus, explicit refresh, and completed Codex Transfer operations.
+
+Session cards follow Codex's own naming precedence: paginated history uses `threads.name`; legacy history uses a distinct `threads.title` or the latest entry in `session_index.jsonl`; unnamed sessions fall back to the generated title or first-message preview.
 
 ### Agent Skills
 
@@ -196,6 +201,7 @@ Please report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
 |---|---|
 | [Documentation index](docs/README.md) | Start here for repository and in-app documentation. |
 | [Design](docs/DESIGN.md) | Architecture, storage seams, invariants, and source findings. |
+| [Providers](docs/PROVIDERS.md) | Provider IDs, configuration, authentication, runtime routing, and transfer implications. |
 | [Safety](docs/SAFETY.md) | Credentials, encrypted reasoning, provenance, divergence, and backup privacy. |
 | [Operations](docs/OPERATIONS.md) | Installation, Fork, Move, restore, and custom paths. |
 

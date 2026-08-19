@@ -139,6 +139,54 @@ class MigrationEngineTest(unittest.TestCase):
         self.assertNotIn("rollout_path", summary)
         self.assertEqual(self.engine.repository.session_title("session-1"), "x" * 1000)
 
+    def test_explicit_thread_name_is_preferred_over_generated_title(self) -> None:
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("ALTER TABLE threads ADD COLUMN name TEXT")
+            conn.execute("ALTER TABLE threads ADD COLUMN first_user_message TEXT")
+            conn.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT DEFAULT 'legacy'")
+            conn.execute(
+                """UPDATE threads
+                   SET title = ?, name = ?, first_user_message = ?, history_mode = 'paginated'
+                   WHERE id = 'session-1'""",
+                ("First user instruction", "Renamed session", "First user instruction"),
+            )
+
+        session = self.engine.repository.scan_sessions()[0]
+        self.assertEqual(session.title, "Renamed session")
+        self.assertEqual(
+            self.engine.repository.session_title("session-1"), "Renamed session"
+        )
+
+    def test_legacy_thread_name_uses_latest_session_index_entry(self) -> None:
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("ALTER TABLE threads ADD COLUMN first_user_message TEXT")
+            conn.execute("ALTER TABLE threads ADD COLUMN history_mode TEXT DEFAULT 'legacy'")
+            conn.execute(
+                "UPDATE threads SET title = ?, first_user_message = ? WHERE id = 'session-1'",
+                ("First user instruction", "First user instruction"),
+            )
+        (self.codex_home / "session_index.jsonl").write_text(
+            json.dumps({"id": "session-1", "thread_name": "Old name"})
+            + "\n"
+            + "not json\n"
+            + json.dumps({"id": "session-1", "thread_name": "Latest name"})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(
+            self.engine.repository.scan_sessions()[0].title, "Latest name"
+        )
+        self.assertEqual(
+            self.engine.repository.session_title("session-1"), "Latest name"
+        )
+
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE threads SET title = 'Explicit legacy title'")
+        self.assertEqual(
+            self.engine.repository.scan_sessions()[0].title, "Explicit legacy title"
+        )
+
     @unittest.skipIf(fcntl is None, "flock is unavailable")
     def test_held_writer_lock_marks_session_active(self) -> None:
         lock_dir = self.codex_home / "thread-writer-locks"
