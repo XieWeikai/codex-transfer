@@ -10,11 +10,11 @@ import shlex
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .app_server import AppServerError, CodexAppServer, ForkResult
 from .audit import AuditStore
@@ -233,6 +233,19 @@ json.dump(locked,sys.stdout)
         )
         self._codex_home: str | None = None
         self._state_db_path: str | None = None
+        self._provider_config: tuple[float, dict[str, Any]] | None = None
+        self._provider_config_lock = threading.Lock()
+
+    def _config(self) -> dict[str, Any]:
+        with self._provider_config_lock:
+            if self._provider_config and time.monotonic() - self._provider_config[0] < 300:
+                return self._provider_config[1]
+            result = self.app_server.request("config/read", {})
+            config = result.get("config") or {}
+            if not isinstance(config, dict):
+                config = {}
+            self._provider_config = (time.monotonic(), config)
+            return config
 
     def _ssh_command(self, remote_command: str, tty: bool = False) -> list[str]:
         command = [
@@ -293,7 +306,7 @@ json.dump(locked,sys.stdout)
     @property
     def state_db_path(self) -> str:
         if self._state_db_path is None:
-            config = self.app_server.request("config/read", {}).get("config") or {}
+            config = self._config()
             sqlite_home = config.get("sqlite_home") or config.get("sqliteHome")
             if isinstance(sqlite_home, str) and sqlite_home.startswith("/"):
                 self._state_db_path = posixpath.join(sqlite_home, "state_5.sqlite")
@@ -346,10 +359,8 @@ json.dump(locked,sys.stdout)
         return self.app_server.provider_ids()
 
     def provider_details(self, sessions: list[Session]) -> list[dict[str, Any]]:
-        result = self.app_server.request("config/read", {})
-        config = result.get("config") or {}
         return provider_catalog(
-            config if isinstance(config, dict) else {},
+            self._config(),
             sessions,
             host_id=self.alias,
             config_source=posixpath.join(self.codex_home, "config.toml"),
@@ -449,16 +460,27 @@ class HostFleet:
         local_app_server: CodexAppServer,
         discovery: DesktopSshDiscovery | None = None,
         adapters: dict[str, HostAdapter] | None = None,
+        remote_scan_timeout: float = 35.0,
     ):
         self.audit = audit
         self.discovery = discovery or DesktopSshDiscovery()
         self.local = LocalHostAdapter(local_repository, local_app_server)
         self._injected_adapters = adapters
         self._adapters: dict[str, HostAdapter] = {"local": self.local}
-        self._cache: tuple[float, dict[str, Any]] | None = None
         self._cache_lock = threading.Lock()
         self._scan_thread: threading.Thread | None = None
+        self._remote_cache: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+        self._pending_scans: set[str] = set()
+        self._refreshing_hosts: set[str] = set()
+        self._stale_hosts: set[str] = set()
+        self._retry_counts: dict[str, int] = {}
+        self._retry_timers: dict[str, threading.Timer] = {}
+        self._remote_scan_timeout = remote_scan_timeout
+        self._change_notifier: Callable[[], None] | None = None
         self.lock_path = audit.root / "fleet.lock"
+
+    def set_change_notifier(self, notifier: Callable[[], None]) -> None:
+        self._change_notifier = notifier
 
     def _refresh_hosts(self) -> dict[str, HostAdapter]:
         if self._injected_adapters is not None:
@@ -482,26 +504,14 @@ class HostFleet:
         return adapters[host_id]
 
     def host_snapshot(self) -> dict[str, Any]:
-        with self._cache_lock:
-            if self._cache is not None:
-                return {
-                    "ready": True,
-                    "hosts": self._cache[1]["hosts"],
-                    "sessions": [
-                        item
-                        for item in self._cache[1]["sessions"]
-                        if item.get("host_id") != "local"
-                    ],
-                }
-        hosts = []
-        for adapter in self._refresh_hosts().values():
-            descriptor = adapter.descriptor.to_dict()
-            descriptor.update(
-                {"providers": [], "provider_details": [], "session_count": 0, "loading": True}
-            )
-            hosts.append(descriptor)
-        hosts.sort(key=lambda item: (item["id"] != "local", item["label"].casefold()))
-        return {"ready": False, "hosts": hosts, "sessions": []}
+        adapters = self._refresh_hosts()
+        self._ensure_remote_scans(adapters)
+        hosts, sessions = self._remote_snapshot(adapters)
+        return {
+            "ready": not any(host.get("loading") for host in hosts),
+            "hosts": hosts,
+            "sessions": sessions,
+        }
 
     def workspace(
         self,
@@ -509,115 +519,242 @@ class HostFleet:
         operations: list[dict],
         local_sessions: list[Session] | None = None,
         wait_for_remote: bool = False,
+        refresh_host: str | None = None,
     ) -> dict[str, Any]:
-        with self._cache_lock:
-            if not wait_for_remote and self._cache and time.monotonic() - self._cache[0] < 15:
-                cached = dict(self._cache[1])
-                cached["operations"] = operations
-                if local_sessions is not None:
-                    cached["sessions"] = [
-                        *[item for item in cached["sessions"] if item.get("host_id") != "local"],
-                        *(session.to_summary_dict() for session in local_sessions),
-                    ]
-                    cached["sessions"].sort(
-                        key=lambda item: item.get("updated_at", 0), reverse=True
-                    )
-                return cached
-        if wait_for_remote:
-            return self._scan_workspace(local_status, operations, local_sessions)
-
         adapters = self._refresh_hosts()
-        with self._cache_lock:
-            if self._scan_thread is None or not self._scan_thread.is_alive():
-                self._cache = None
-                self._scan_thread = threading.Thread(
-                    target=self._scan_workspace,
-                    args=(dict(local_status), list(operations), local_sessions),
-                    name="codex-transfer-host-scan",
-                    daemon=True,
-                )
-                self._scan_thread.start()
+        if wait_for_remote:
+            self._scan_remote_batch(adapters, set(adapters) - {"local"})
+        else:
+            requested = {refresh_host} if refresh_host and refresh_host != "local" else set()
+            self._ensure_remote_scans(adapters, requested)
         local_items = local_sessions or self.local.sessions()
-        hosts = []
-        for adapter in adapters.values():
-            descriptor = adapter.descriptor.to_dict()
-            if adapter is self.local:
-                provider_details = local_status.get("provider_details") or self.local.provider_details(
-                    local_items
-                )
-                descriptor.update(
-                    {
-                        "providers": [item["id"] for item in provider_details],
-                        "provider_details": provider_details,
-                        "session_count": len(local_items),
-                        "loading": False,
-                    }
-                )
-            else:
-                descriptor.update(
-                    {"providers": [], "provider_details": [], "session_count": 0, "loading": True}
-                )
-            hosts.append(descriptor)
+        hosts, remote_sessions = self._remote_snapshot(adapters)
+        provider_details = local_status.get("provider_details") or self.local.provider_details(
+            local_items
+        )
+        local_descriptor = self.local.descriptor.to_dict()
+        local_descriptor.update(
+            {
+                "providers": [item["id"] for item in provider_details],
+                "provider_details": provider_details,
+                "session_count": len(local_items),
+                "loading": False,
+                "refreshing": False,
+            }
+        )
+        hosts = [local_descriptor, *[host for host in hosts if host["id"] != "local"]]
         hosts.sort(key=lambda item: (item["id"] != "local", item["label"].casefold()))
+        sessions = [*(session.to_summary_dict() for session in local_items), *remote_sessions]
+        sessions.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
         return {
             "status": {**local_status, "host_count": len(hosts)},
             "hosts": hosts,
-            "sessions": [session.to_summary_dict() for session in local_items],
+            "sessions": sessions,
             "operations": operations,
         }
 
-    def _scan_workspace(
-        self,
-        local_status: dict[str, Any],
-        operations: list[dict],
-        local_sessions: list[Session] | None,
-    ) -> dict[str, Any]:
-        adapters = self._refresh_hosts()
-        sessions: list[Session] = []
-        hosts: list[dict[str, Any]] = []
+    def _ensure_remote_scans(
+        self, adapters: dict[str, HostAdapter], requested: set[str] | None = None
+    ) -> None:
+        remote_ids = set(adapters) - {"local"}
+        requested = requested or set()
+        with self._cache_lock:
+            self._remote_cache = {
+                host_id: snapshot
+                for host_id, snapshot in self._remote_cache.items()
+                if host_id in remote_ids
+            }
+            missing = remote_ids - set(self._remote_cache)
+            for host_id in requested:
+                self._retry_counts.pop(host_id, None)
+                timer = self._retry_timers.pop(host_id, None)
+                if timer is not None:
+                    timer.cancel()
+            inflight = self._refreshing_hosts | self._pending_scans
+            targets = (missing | self._stale_hosts | requested) - inflight
+            targets &= remote_ids
+            if not targets:
+                return
+            self._pending_scans.update(targets)
+            if self._scan_thread is not None and self._scan_thread.is_alive():
+                return
+            self._scan_thread = threading.Thread(
+                target=self._scan_loop,
+                name="codex-transfer-host-scan",
+                daemon=True,
+            )
+            self._scan_thread.start()
+
+    def _scan_loop(self) -> None:
+        while True:
+            with self._cache_lock:
+                if not self._pending_scans:
+                    self._scan_thread = None
+                    break
+                targets = set(self._pending_scans)
+                self._pending_scans.clear()
+                self._refreshing_hosts.update(targets)
+            try:
+                self._scan_remote_batch(self._refresh_hosts(), targets)
+            except Exception as exc:
+                for host_id in targets:
+                    self._store_remote_failure(host_id, str(exc))
+            finally:
+                with self._cache_lock:
+                    self._refreshing_hosts.difference_update(targets)
+            self._notify_change()
+
+    def _notify_change(self) -> None:
+        if self._change_notifier is not None:
+            with contextlib.suppress(Exception):
+                self._change_notifier()
+
+    def _scan_remote_batch(
+        self, adapters: dict[str, HostAdapter], host_ids: set[str]
+    ) -> None:
+        selected = {
+            host_id: adapters[host_id]
+            for host_id in host_ids
+            if host_id != "local" and host_id in adapters
+        }
+        if not selected:
+            return
 
         def scan(adapter: HostAdapter) -> tuple[list[Session], list[dict[str, Any]]]:
-            if adapter is self.local and local_sessions is not None:
-                items = local_sessions
-                details = local_status.get("provider_details") or adapter.provider_details(items)
-            else:
-                items = adapter.sessions()
-                details = adapter.provider_details(items)
-            return items, details
+            items = adapter.sessions()
+            return items, adapter.provider_details(items)
 
-        with ThreadPoolExecutor(max_workers=min(6, len(adapters))) as executor:
-            jobs = {executor.submit(scan, adapter): adapter for adapter in adapters.values()}
-            for future in as_completed(jobs):
-                adapter = jobs[future]
-                descriptor = adapter.descriptor.to_dict()
+        executor = ThreadPoolExecutor(max_workers=min(6, len(selected)))
+        jobs: dict[Future, tuple[str, HostAdapter]] = {
+            executor.submit(scan, adapter): (host_id, adapter)
+            for host_id, adapter in selected.items()
+        }
+        completed: set[Future] = set()
+        try:
+            for future in as_completed(jobs, timeout=self._remote_scan_timeout):
+                completed.add(future)
+                host_id, adapter = jobs[future]
                 try:
                     items, provider_details = future.result()
-                    sessions.extend(items)
-                    descriptor["provider_details"] = provider_details
-                    descriptor["providers"] = [item["id"] for item in provider_details]
-                    descriptor["session_count"] = len(items)
-                except Exception as exc:
+                    descriptor = adapter.descriptor.to_dict()
                     descriptor.update(
                         {
-                            "connected": False,
-                            "error": str(exc),
-                            "providers": [],
-                            "provider_details": [],
-                            "session_count": 0,
+                            "providers": [item["id"] for item in provider_details],
+                            "provider_details": provider_details,
+                            "session_count": len(items),
+                            "loading": False,
+                            "refreshing": False,
                         }
                     )
-                hosts.append(descriptor)
-        hosts.sort(key=lambda item: (item["id"] != "local", item["label"].casefold()))
-        sessions.sort(key=lambda item: item.updated_at, reverse=True)
-        result = {
-            "status": {**local_status, "host_count": len(hosts)},
-            "hosts": hosts,
-            "sessions": [session.to_summary_dict() for session in sessions],
-            "operations": operations,
-        }
+                    summaries = [item.to_summary_dict() for item in items]
+                    with self._cache_lock:
+                        self._remote_cache[host_id] = (descriptor, summaries)
+                        self._stale_hosts.discard(host_id)
+                        self._retry_counts.pop(host_id, None)
+                        timer = self._retry_timers.pop(host_id, None)
+                        if timer is not None:
+                            timer.cancel()
+                except Exception as exc:
+                    self._store_remote_failure(host_id, str(exc))
+                with self._cache_lock:
+                    self._refreshing_hosts.discard(host_id)
+                self._notify_change()
+        except TimeoutError:
+            pass
+        pending = set(jobs) - completed
+        for future in pending:
+            host_id, _adapter = jobs[future]
+            future.cancel()
+            self._store_remote_failure(
+                host_id,
+                f"Remote scan exceeded {self._remote_scan_timeout:g} seconds",
+                retry=False,
+            )
+            with self._cache_lock:
+                self._refreshing_hosts.discard(host_id)
+            self._notify_change()
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    def _store_remote_failure(self, host_id: str, error: str, retry: bool = True) -> None:
         with self._cache_lock:
-            self._cache = (time.monotonic(), result)
-        return result
+            cached = self._remote_cache.get(host_id)
+            if cached:
+                descriptor, sessions = cached
+                descriptor = {**descriptor, "error": error, "refreshing": False, "stale": True}
+                self._remote_cache[host_id] = (descriptor, sessions)
+            else:
+                descriptor = self._adapters.get(host_id, self.local).descriptor.to_dict()
+                descriptor.update(
+                    {
+                        "connected": False,
+                        "error": error,
+                        "providers": [],
+                        "provider_details": [],
+                        "session_count": 0,
+                        "loading": False,
+                        "refreshing": False,
+                    }
+                )
+                self._remote_cache[host_id] = (descriptor, [])
+            self._stale_hosts.discard(host_id)
+            attempts = self._retry_counts.get(host_id, 0) + 1
+            self._retry_counts[host_id] = attempts
+            if retry and attempts == 1 and host_id not in self._retry_timers:
+                timer = threading.Timer(1.0, self._retry_remote_host, args=(host_id,))
+                timer.daemon = True
+                self._retry_timers[host_id] = timer
+                timer.start()
+
+    def _retry_remote_host(self, host_id: str) -> None:
+        adapters = self._refresh_hosts()
+        with self._cache_lock:
+            self._retry_timers.pop(host_id, None)
+            if host_id not in adapters:
+                return
+            self._pending_scans.add(host_id)
+            if self._scan_thread is not None and self._scan_thread.is_alive():
+                return
+            self._scan_thread = threading.Thread(
+                target=self._scan_loop,
+                name="codex-transfer-host-scan",
+                daemon=True,
+            )
+            self._scan_thread.start()
+
+    def _remote_snapshot(
+        self, adapters: dict[str, HostAdapter]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        hosts = []
+        sessions = []
+        with self._cache_lock:
+            cache = dict(self._remote_cache)
+            refreshing = set(self._refreshing_hosts) | set(self._pending_scans)
+        for host_id, adapter in adapters.items():
+            if host_id == "local":
+                continue
+            cached = cache.get(host_id)
+            if cached:
+                descriptor, items = cached
+                descriptor = {**descriptor, "loading": False, "refreshing": host_id in refreshing}
+                hosts.append(descriptor)
+                sessions.extend(items)
+            else:
+                descriptor = adapter.descriptor.to_dict()
+                descriptor.update(
+                    {
+                        "providers": [],
+                        "provider_details": [],
+                        "session_count": 0,
+                        "loading": True,
+                        "refreshing": host_id in refreshing,
+                    }
+                )
+                hosts.append(descriptor)
+        return hosts, sessions
+
+    def _invalidate_hosts(self, *host_ids: str) -> None:
+        with self._cache_lock:
+            self._stale_hosts.update(host_id for host_id in host_ids if host_id != "local")
 
     def preview_archive(
         self, session_ids: list[str], host_id: str, archived: bool
@@ -735,8 +872,7 @@ class HostFleet:
                 except Exception as exc:
                     failed = {"session_id": session_id, "error": str(exc)}
                     break
-        with self._cache_lock:
-            self._cache = None
+        self._invalidate_hosts(host_id)
         return {
             "requested_session_ids": session_ids,
             "host_id": host_id,
@@ -1041,7 +1177,7 @@ class HostFleet:
                 except Exception as exc:
                     failed = {"session_id": session_id, "error": str(exc)}
                     break
-        self._cache = None
+        self._invalidate_hosts(source_host_id, target_host_id)
         return {
             "requested_session_ids": session_ids,
             "source_host": source_host_id,
@@ -1290,7 +1426,7 @@ class HostFleet:
             original["restored_by"] = restore_id
             self.audit.write_manifest(self.audit.operations / operation_id, original)
             self.audit.append_event(restore_id, "cross_host_restore", "completed", {"restores": operation_id})
-            self._cache = None
+            self._invalidate_hosts(original["source_host"], original["target_host"])
             return manifest
         except Exception as exc:
             rollback_error = None

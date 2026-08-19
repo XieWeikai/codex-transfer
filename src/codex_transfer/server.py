@@ -22,6 +22,8 @@ class CodexTransferServer(ThreadingHTTPServer):
             engine.repository.home,
             workspace_fingerprint=engine.repository.workspace_fingerprint,
         )
+        if engine.fleet is not None:
+            engine.fleet.set_change_notifier(lambda: self.changes.publish("workspace"))
         super().__init__(address, CodexTransferHandler)
         self.changes.start()
 
@@ -40,8 +42,14 @@ class CodexTransferHandler(BaseHTTPRequestHandler):
             if path == "/api/status":
                 self._json(self.server.engine.status())
             elif path == "/api/workspace":
-                fresh = parse_qs(parsed.query).get("fresh", ["0"])[0] == "1"
-                self._json(self.server.engine.workspace_snapshot(wait_for_remote=fresh))
+                query = parse_qs(parsed.query)
+                fresh = query.get("fresh", ["0"])[0] == "1"
+                refresh_host = query.get("refresh_host", [None])[0]
+                self._json(
+                    self.server.engine.workspace_snapshot(
+                        wait_for_remote=fresh, refresh_host=refresh_host
+                    )
+                )
             elif path == "/api/events":
                 self._event_stream()
             elif path == "/api/session-locks":

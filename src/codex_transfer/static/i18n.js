@@ -164,6 +164,8 @@
     [/^已同步 (.+)$/, "Synced $1"],
     [/^已更新 (\d+) 个占用状态$/, "Updated $1 in-use states"],
     [/^(.+) · 正在读取$/, "$1 · loading"],
+    [/^(.+) · 正在更新$/, "$1 · refreshing"],
+    [/^(.+) · 刷新失败$/, "$1 · refresh failed"],
     [/^请求 (\d+)$/, "$1 request retries"],
     [/^流 (\d+)$/, "$1 stream retries"],
     [/^空闲 (.+)$/, "$1 idle timeout"],

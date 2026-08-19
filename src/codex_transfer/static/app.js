@@ -22,7 +22,6 @@ const state = {
   popoverPinned: false,
   popoverHideTimer: null,
   popoverLoadTimer: null,
-  refreshTimer: null,
   loadPromise: null,
   refreshQueued: null,
   liveRefreshTimer: null,
@@ -331,7 +330,9 @@ async function load(options = {}) {
   }
   state.loadPromise = (async () => {
     try {
-    const path = options.freshRemote ? "/api/workspace?fresh=1" : "/api/workspace";
+    const path = options.freshRemote
+      ? `/api/workspace?refresh_host=${encodeURIComponent(state.activeHost)}`
+      : "/api/workspace";
     const workspace = await api(path);
     const status = workspace.status;
     state.sessions = prepareSessions(workspace.sessions);
@@ -356,10 +357,6 @@ async function load(options = {}) {
     renderAll();
     if (options.announce) {
       setLiveState("live", `已同步 ${new Date().toLocaleTimeString(window.CodexTransferI18n.localeCode(), {hour: "2-digit", minute: "2-digit", second: "2-digit"})}`);
-    }
-    clearTimeout(state.refreshTimer);
-    if (state.hosts.some(host => host.loading)) {
-      state.refreshTimer = setTimeout(pollHosts, 1200);
     }
   } catch (error) {
     $("#health").className = "health-pill bad";
@@ -431,25 +428,6 @@ function connectLiveUpdates() {
   source.onerror = () => setLiveState("reconnecting", "重新连接", "实时状态连接中断，浏览器会自动重连");
 }
 
-async function pollHosts() {
-  try {
-    const snapshot = await api("/api/hosts");
-    if (!snapshot.ready) {
-      state.refreshTimer = setTimeout(pollHosts, 1200);
-      return;
-    }
-    state.hosts = snapshot.hosts;
-    state.sessions = prepareSessions([
-      ...state.sessions.filter(session => session.host_id === "local"),
-      ...snapshot.sessions.filter(session => session.host_id !== "local"),
-    ]);
-    state.providers = state.hosts.find(host => host.id === state.activeHost)?.providers || [];
-    renderAll();
-  } catch (_error) {
-    state.refreshTimer = setTimeout(pollHosts, 2500);
-  }
-}
-
 function observedProviders() {
   const counts = new Map();
   state.sessions.filter(session => session.host_id === state.activeHost).forEach(session => counts.set(session.provider, (counts.get(session.provider) || 0) + 1));
@@ -497,11 +475,19 @@ function renderHosts() {
   const source = $("#sourceHost");
   source.innerHTML = state.hosts.map(host => {
     const disabled = !host.connected || host.loading;
-    const suffix = host.loading ? " · 正在读取" : host.connected ? "" : " · unavailable";
+    const suffix = host.loading
+      ? " · 正在读取"
+      : host.refreshing
+        ? " · 正在更新"
+        : host.error
+          ? " · 刷新失败"
+          : host.connected ? "" : " · unavailable";
     return `<option value="${escapeHtml(host.id)}" ${disabled ? "disabled" : ""}>${escapeHtml(host.label)}${suffix}</option>`;
   }).join("");
   source.value = state.activeHost;
   const current = state.hosts.find(host => host.id === state.activeHost);
+  source.setAttribute("aria-busy", String(Boolean(current?.loading || current?.refreshing)));
+  source.title = current?.error || "";
   $("#hostState").textContent = current?.kind === "local" ? "LOCAL" : "SSH";
 }
 
@@ -1353,8 +1339,7 @@ function setupEvents() {
     if (document.hidden) return;
     const pending = state.livePending;
     state.livePending = false;
-    if (pending || state.activeHost === "local") load({announce: pending});
-    else load({freshRemote: true, announce: true});
+    load({announce: pending});
   });
 }
 

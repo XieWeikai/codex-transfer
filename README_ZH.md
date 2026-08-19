@@ -149,7 +149,7 @@ ct restore --operation OPERATION_ID --acknowledge RESTORE --json
 
 当 Codex Transfer 无法对 `thread-writer-locks/<session-id>.lock` 取得非阻塞独占锁时，Session 会显示为“占用”。当前 Codex 在恢复 thread 时取得该锁，并在内存 recorder 仍被加载期间持续持有。最后一个客户端取消订阅后，app-server 还会等待“无订阅且无活动”满 30 分钟才卸载。因此“占用”表示 Codex 拥有独占写入权，不等于模型正在生成。
 
-Web UI 通过原生文件事件和 SSE 接收本机变化。锁变化只请求轻量锁快照；SQLite/WAL 的连续变化会等待短暂静默期，并且只有界面可见元数据改变时才刷新工作区，普通消息追加会被过滤，不存在周期性全量轮询。现有 Desktop SSH proxy 不会把远端文件事件转发给 Codex Transfer，因此远端主机在切换主机、窗口重新获得焦点、手动刷新和本应用完成操作时刷新。
+Web UI 通过原生文件事件和 SSE 接收本机变化。锁变化只请求轻量锁快照；SQLite/WAL 的连续变化会等待短暂静默期，并且只有界面可见元数据改变时才刷新工作区，普通消息追加会被过滤，不存在周期性全量轮询。现有 Desktop SSH proxy 不会把远端文件事件转发给 Codex Transfer，因此远端主机只在首次发现、被选择、手动刷新或本应用完成相关操作时刷新。刷新期间继续显示上一次成功快照，完成后通过 SSE 主动更新；窗口重新获得焦点只更新本机状态，不会启动 SSH 扫描。
 
 Session 卡片遵循 Codex 自己的名称优先级：paginated history 使用 `threads.name`；legacy history 使用与首条消息不同的 `threads.title`，否则读取 `session_index.jsonl` 的最新记录；未命名会话才回退到自动标题或第一条指令预览。
 

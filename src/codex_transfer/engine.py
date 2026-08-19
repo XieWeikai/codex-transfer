@@ -66,7 +66,9 @@ class MigrationEngine:
             "audit_chain_valid": self.audit.verify_chain(),
         }
 
-    def workspace_snapshot(self, wait_for_remote: bool = False) -> dict[str, Any]:
+    def workspace_snapshot(
+        self, wait_for_remote: bool = False, refresh_host: str | None = None
+    ) -> dict[str, Any]:
         sessions = self.repository.scan_sessions()
         if self.fleet is not None:
             return self.fleet.workspace(
@@ -74,6 +76,7 @@ class MigrationEngine:
                 self.audit.list_operations(),
                 sessions,
                 wait_for_remote=wait_for_remote,
+                refresh_host=refresh_host,
             )
         return {
             "status": self.status(sessions),

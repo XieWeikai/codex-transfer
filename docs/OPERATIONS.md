@@ -79,7 +79,7 @@ Do not delete or replace a lock file to force access. File locks are attached to
 
 On macOS, Codex Transfer watches the local Codex home with `kqueue` and delivers small revision events to the browser with Server-Sent Events. Writer-lock directory changes trigger a lock-only refresh. SQLite, WAL, configuration, rename, and archive bursts are coalesced, then compared against a UI-visible metadata fingerprint before any workspace refresh. Ordinary message appends are filtered out. Hidden pages defer work until visible, so live updates do not turn into a full-workspace polling loop.
 
-An existing Codex Desktop SSH proxy does not expose remote filesystem notifications to this process. Remote workspaces therefore refresh when selected, when the browser returns to the foreground, after a Codex Transfer operation, or when the user presses Refresh. This avoids permanent background SSH scanners.
+An existing Codex Desktop SSH proxy does not expose remote filesystem notifications to this process. Remote workspaces therefore refresh when first discovered, when selected, after a Codex Transfer operation, or when the user presses Refresh. The last successful snapshot remains visible during refresh, and scan completion is delivered through SSE rather than browser polling. Returning to the foreground updates local state without starting an SSH scan.
 
 This detects write ownership, not human attention. Merely listing a session does not acquire the lock, but opening or resuming it does; once loaded, it can remain locked while idle until the unload delay expires. Recent `updated_at` timestamps and process-name matching are not used because they cannot establish exclusive write safety.
 

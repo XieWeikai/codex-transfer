@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -10,7 +12,12 @@ from unittest.mock import patch
 
 from codex_transfer.app_server import ForkResult
 from codex_transfer.audit import AuditStore
-from codex_transfer.fleet import DesktopSshDiscovery, HostDescriptor, HostFleet
+from codex_transfer.fleet import (
+    DesktopSshDiscovery,
+    HostDescriptor,
+    HostFleet,
+    SshHostAdapter,
+)
 from codex_transfer.model import Session
 from codex_transfer.repository import CodexRepository
 from codex_transfer.providers import provider_catalog
@@ -22,14 +29,21 @@ class FakeHost:
         self._sessions = {session.id: session for session in sessions}
         self.payloads = dict(payloads)
         self.providers = {"source", "target"}
+        self.session_reads = 0
+        self.provider_reads = 0
+        self.failure = None
 
     def sessions(self):
+        self.session_reads += 1
+        if self.failure:
+            raise RuntimeError(self.failure)
         return list(self._sessions.values())
 
     def provider_ids(self):
         return sorted(self.providers)
 
     def provider_details(self, sessions):
+        self.provider_reads += 1
         return provider_catalog(
             {"model_providers": {provider: {} for provider in self.providers}},
             sessions,
@@ -149,6 +163,118 @@ class FleetTest(unittest.TestCase):
             return_value=SimpleNamespace(stdout=process_table),
         ):
             self.assertEqual(DesktopSshDiscovery().aliases(), ["G1"])
+
+    def test_local_workspace_updates_reuse_remote_snapshot(self):
+        status = {"provider_details": [], "providers": []}
+        self.fleet.workspace(status, [], wait_for_remote=True)
+        reads = (self.source.session_reads, self.target.session_reads)
+
+        snapshot = self.fleet.workspace({**status, "session_count": 99}, [])
+
+        self.assertEqual((self.source.session_reads, self.target.session_reads), reads)
+        self.assertIn("session-1", {item["id"] for item in snapshot["sessions"]})
+
+    def test_failed_refresh_preserves_last_successful_snapshot(self):
+        status = {"provider_details": [], "providers": []}
+        self.fleet.workspace(status, [], wait_for_remote=True)
+        self.source.failure = "temporary failure"
+
+        self.fleet._scan_remote_batch(self.fleet._refresh_hosts(), {"source-host"})
+        snapshot = self.fleet.host_snapshot()
+        source = next(host for host in snapshot["hosts"] if host["id"] == "source-host")
+
+        self.assertTrue(snapshot["ready"])
+        self.assertEqual(source["error"], "temporary failure")
+        self.assertIn("session-1", {item["id"] for item in snapshot["sessions"]})
+
+    def test_remote_timeout_finishes_loading_state(self):
+        release = threading.Event()
+        original = self.source.sessions
+
+        def delayed_sessions():
+            release.wait(0.2)
+            return original()
+
+        self.source.sessions = delayed_sessions
+        self.fleet._remote_scan_timeout = 0.01
+        started = time.monotonic()
+        self.fleet.workspace({"provider_details": [], "providers": []}, [], wait_for_remote=True)
+        elapsed = time.monotonic() - started
+        release.set()
+
+        snapshot = self.fleet.host_snapshot()
+        source = next(host for host in snapshot["hosts"] if host["id"] == "source-host")
+        self.assertLess(elapsed, 0.1)
+        self.assertTrue(snapshot["ready"])
+        self.assertFalse(source["connected"])
+        self.assertIn("exceeded", source["error"])
+
+    def test_background_scan_notifies_without_frontend_polling(self):
+        condition = threading.Condition()
+        notifications = 0
+
+        def notify():
+            nonlocal notifications
+            with condition:
+                notifications += 1
+                condition.notify_all()
+
+        self.fleet.set_change_notifier(notify)
+        self.fleet.workspace({"provider_details": [], "providers": []}, [])
+        with condition:
+            self.assertTrue(condition.wait_for(lambda: notifications >= 2, timeout=1))
+        self.assertTrue(self.fleet.host_snapshot()["ready"])
+
+    def test_failed_background_scan_retries_once(self):
+        attempts = 0
+        original = self.source.sessions
+
+        def transient_sessions():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("temporary failure")
+            return original()
+
+        self.source.sessions = transient_sessions
+        condition = threading.Condition()
+        notifications = 0
+
+        def notify():
+            nonlocal notifications
+            with condition:
+                notifications += 1
+                condition.notify_all()
+
+        self.fleet.set_change_notifier(notify)
+        self.fleet.workspace({"provider_details": [], "providers": []}, [])
+        with condition:
+            self.assertTrue(condition.wait_for(lambda: attempts >= 2, timeout=3))
+        source = next(
+            host
+            for host in self.fleet.host_snapshot()["hosts"]
+            if host["id"] == "source-host"
+        )
+        self.assertEqual(attempts, 2)
+        self.assertTrue(source["connected"])
+        self.assertIsNone(source["error"])
+
+    def test_ssh_provider_config_is_cached(self):
+        adapter = SshHostAdapter("test-host")
+        adapter._codex_home = "/tmp/.codex"
+        calls = 0
+
+        class AppServer:
+            def request(self, method, params):
+                nonlocal calls
+                calls += 1
+                return {"config": {"model_providers": {"custom": {}}}}
+
+        adapter.app_server = AppServer()
+        adapter.provider_details([])
+        adapter.provider_details([])
+        self.assertEqual(adapter.state_db_path, "/tmp/.codex/state_5.sqlite")
+        self.assertEqual(calls, 1)
 
     def test_cross_host_fork_preserves_source(self):
         plan = self.fleet.preview_transfer(

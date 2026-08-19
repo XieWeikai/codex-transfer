@@ -31,7 +31,9 @@ class StaticAssetsTest(unittest.TestCase):
     def test_assets_are_packaged(self) -> None:
         self.assertIn(b"Codex Transfer", CodexTransferHandler._static("index.html"))
         self.assertIn(b"/api/workspace", CodexTransferHandler._static("app.js"))
-        self.assertIn(b"/api/hosts", CodexTransferHandler._static("app.js"))
+        self.assertNotIn(b"pollHosts", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"refresh_host", CodexTransferHandler._static("app.js"))
+        self.assertIn(b'aria-busy', CodexTransferHandler._static("app.js"))
         self.assertIn(b"/api/events", CodexTransferHandler._static("app.js"))
         self.assertIn(b"/api/session-locks", CodexTransferHandler._static("app.js"))
         self.assertIn(b"providerPopover", CodexTransferHandler._static("app.js"))
