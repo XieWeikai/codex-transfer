@@ -37,6 +37,8 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b"/api/events", CodexTransferHandler._static("app.js"))
         self.assertIn(b"/api/session-locks", CodexTransferHandler._static("app.js"))
         self.assertIn(b"providerPopover", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"host?.providers || []", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"availableProviders.includes(state.activeProvider)", CodexTransferHandler._static("app.js"))
         self.assertIn(b"/api/preview", CodexTransferHandler._static("app.js"))
         self.assertIn(b"/api/fork", CodexTransferHandler._static("app.js"))
         self.assertIn(b"/api/archive", CodexTransferHandler._static("app.js"))

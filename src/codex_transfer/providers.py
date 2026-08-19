@@ -26,7 +26,9 @@ def provider_catalog(
     provider_ids = {"openai", *configured.keys(), *counts.keys()}
 
     catalog = []
-    for provider_id in sorted(provider_ids, key=str.casefold):
+    for provider_id in sorted(
+        provider_ids, key=lambda value: (value.casefold(), value)
+    ):
         definition = configured.get(provider_id)
         details = definition if isinstance(definition, dict) else {}
         is_configured = provider_id in configured

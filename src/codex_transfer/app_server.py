@@ -97,6 +97,9 @@ class CodexAppServer:
                     "sortDirection": "desc",
                     "archived": archived,
                     "useStateDbOnly": True,
+                    # Codex treats an omitted filter as "current provider only";
+                    # an explicit empty list means all providers.
+                    "modelProviders": [],
                 }
                 if cursor:
                     params["cursor"] = cursor
@@ -117,7 +120,7 @@ class CodexAppServer:
         providers = config.get("model_providers") or config.get("modelProviders") or {}
         return sorted(
             {"openai", *(str(key) for key in providers if isinstance(providers, dict))},
-            key=str.casefold,
+            key=lambda provider_id: (provider_id.casefold(), provider_id),
         )
 
     def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:

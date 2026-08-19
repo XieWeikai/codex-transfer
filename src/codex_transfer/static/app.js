@@ -340,8 +340,9 @@ async function load(options = {}) {
     if (!state.hosts.some(host => host.id === state.activeHost && host.connected)) state.activeHost = "local";
     state.providers = (state.hosts.find(host => host.id === state.activeHost)?.providers || status.providers);
     state.operations = workspace.operations;
-    if (!state.activeProvider || !state.sessions.some(session => session.host_id === state.activeHost && session.provider === state.activeProvider)) {
-      state.activeProvider = observedProviders()[0] || null;
+    const availableProviders = observedProviders();
+    if (!state.activeProvider || !availableProviders.includes(state.activeProvider)) {
+      state.activeProvider = availableProviders[0] || null;
     }
     $("#homePath").textContent = `${status.codex_home}  ·  backups ${status.data_dir}`;
     const healthy = status.databases.length > 0
@@ -431,7 +432,9 @@ function connectLiveUpdates() {
 function observedProviders() {
   const counts = new Map();
   state.sessions.filter(session => session.host_id === state.activeHost).forEach(session => counts.set(session.provider, (counts.get(session.provider) || 0) + 1));
-  return [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || a.localeCompare(b));
+  const host = state.hosts.find(item => item.id === state.activeHost);
+  return [...new Set([...(host?.providers || []), ...counts.keys()])]
+    .sort((a, b) => ((counts.get(b) || 0) - (counts.get(a) || 0)) || a.localeCompare(b));
 }
 
 function projectLabel(path) {

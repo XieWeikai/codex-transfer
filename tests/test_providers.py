@@ -78,6 +78,21 @@ class ProviderCatalogTest(unittest.TestCase):
         self.assertFalse(catalog[0]["configured"])
         self.assertEqual(catalog[1]["auth_type"], "OpenAI login / API key")
 
+    def test_provider_ids_remain_case_sensitive(self) -> None:
+        catalog = provider_catalog(
+            {"model_providers": {"OpenAI": {"name": "Configured route"}}},
+            [session("openai", archived=True)],
+            host_id="G1",
+            config_source="/home/unitree/.codex/config.toml",
+        )
+
+        self.assertEqual([item["id"] for item in catalog], ["OpenAI", "openai"])
+        configured, historical = catalog
+        self.assertTrue(configured["configured"])
+        self.assertEqual(configured["session_count"], 0)
+        self.assertFalse(historical["configured"])
+        self.assertEqual(historical["archived_session_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
