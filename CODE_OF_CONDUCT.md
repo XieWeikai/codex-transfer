@@ -4,7 +4,7 @@ English | [简体中文](CODE_OF_CONDUCT_ZH.md)
 
 ## Our commitment
 
-We are committed to making participation in Codex Relay a respectful, safe, and constructive experience for everyone, regardless of age, body size, disability, ethnicity, gender identity or expression, level of experience, nationality, personal appearance, race, religion, sexual identity and orientation, or socioeconomic status.
+We are committed to making participation in Codex Transfer a respectful, safe, and constructive experience for everyone, regardless of age, body size, disability, ethnicity, gender identity or expression, level of experience, nationality, personal appearance, race, religion, sexual identity and orientation, or socioeconomic status.
 
 We act with particular care around session data and security reports. Prompts, source code, credentials, filesystem paths, and private conversations must never be exposed to make a point in a public discussion.
 

@@ -267,7 +267,7 @@ class CodexRepository:
 
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
-        temp = path.with_name(f".{path.name}.csm.tmp")
+        temp = path.with_name(f".{path.name}.ct.tmp")
         try:
             with temp.open("wb") as handle:
                 handle.write(content)

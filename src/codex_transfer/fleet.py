@@ -119,7 +119,7 @@ class LocalHostAdapter:
         self.repository = repository
         self.app_server = app_server
         self.descriptor = HostDescriptor("local", "This Mac", "local")
-        self._staging_root = repository.home / "imports" / "codex-relay"
+        self._staging_root = repository.home / "imports" / "codex-transfer"
 
     def sessions(self) -> list[Session]:
         return self.repository.scan_sessions()
@@ -279,7 +279,7 @@ json.dump(locked,sys.stdout)
 
     def _validate_path(self, path: str, staging_only: bool = False) -> str:
         normalized = posixpath.normpath(path)
-        root = posixpath.join(self.codex_home, "imports", "codex-relay") if staging_only else self.codex_home
+        root = posixpath.join(self.codex_home, "imports", "codex-transfer") if staging_only else self.codex_home
         if normalized != root and not normalized.startswith(root.rstrip("/") + "/"):
             raise FleetError(f"Remote path escapes Codex home on {self.alias}")
         return normalized
@@ -346,7 +346,7 @@ json.dump(locked,sys.stdout)
     def stage_rollout(self, operation_id: str, session_id: str, payload: bytes) -> str:
         operation_id = require_safe_identifier(operation_id, "operation ID")
         session_id = require_safe_identifier(session_id, "session ID")
-        directory = posixpath.join(self.codex_home, "imports", "codex-relay")
+        directory = posixpath.join(self.codex_home, "imports", "codex-transfer")
         destination = posixpath.join(directory, f"{operation_id}-{session_id}.jsonl")
         command = (
             "umask 077; mkdir -p "
@@ -515,7 +515,7 @@ class HostFleet:
                 self._scan_thread = threading.Thread(
                     target=self._scan_workspace,
                     args=(dict(local_status), list(operations), local_sessions),
-                    name="codex-relay-host-scan",
+                    name="codex-transfer-host-scan",
                     daemon=True,
                 )
                 self._scan_thread.start()
@@ -1058,7 +1058,7 @@ class HostFleet:
                 try:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except (OSError, BlockingIOError) as exc:
-                    raise FleetError("Another Codex Relay operation is already running") from exc
+                    raise FleetError("Another Codex Transfer operation is already running") from exc
             try:
                 yield
             finally:

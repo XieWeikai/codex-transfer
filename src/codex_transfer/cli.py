@@ -13,7 +13,7 @@ from .audit import AuditStore
 from .engine import MigrationEngine, MigrationError
 from .fleet import FleetError, HostFleet
 from .repository import CodexRepository, RepositoryError
-from .server import SessionManagerServer
+from .server import CodexTransferServer
 
 
 def _default(value: Any, suppress: bool) -> Any:
@@ -30,7 +30,7 @@ def _add_storage_options(target: argparse.ArgumentParser, suppress: bool = False
     target.add_argument(
         "--data-dir",
         type=Path,
-        default=_default(Path("~/.codex-session-manager").expanduser(), suppress),
+        default=_default(Path("~/.codex-transfer").expanduser(), suppress),
         help="Audit and backup directory",
     )
     target.add_argument(
@@ -59,7 +59,7 @@ def _add_command_storage_options(target: argparse.ArgumentParser) -> None:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
-        prog="codex-relay",
+        prog="codex-transfer",
         description="Inspect, fork, move, archive, and restore Codex sessions across providers and hosts",
     )
     _add_storage_options(result)
@@ -195,8 +195,8 @@ def build_engine(args: argparse.Namespace) -> MigrationEngine:
 
 
 def _serve(args: argparse.Namespace, engine: MigrationEngine) -> None:
-    server = SessionManagerServer((args.host, args.port), engine)
-    print(f"Codex Relay: http://{args.host}:{server.server_port}")
+    server = CodexTransferServer((args.host, args.port), engine)
+    print(f"Codex Transfer: http://{args.host}:{server.server_port}")
     print(f"Codex home: {engine.repository.home}")
     print(f"Backups: {engine.audit.root}")
     try:

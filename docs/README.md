@@ -1,6 +1,6 @@
-# Codex Relay Documentation
+# Codex Transfer Documentation
 
-Codex Relay manages Codex session placement on this Mac and Codex Desktop-connected SSH hosts without pretending that provider history is universally portable. It exposes these operations:
+Codex Transfer manages Codex session placement on this Mac and Codex Desktop-connected SSH hosts without pretending that provider history is universally portable. It exposes these operations:
 
 - **Fork** creates a new durable Codex thread through the official app-server `thread/fork` interface and asks Codex to use the target `modelProvider`. The source is unchanged.
 - **Move** changes the original thread's provider bucket in both the rollout metadata and SQLite index.

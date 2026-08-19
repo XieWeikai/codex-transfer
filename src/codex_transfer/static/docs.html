@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>Codex Relay Docs</title>
+  <title>Codex Transfer Docs</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/docs.css">
 </head>
 <body class="docs-body">
   <a class="skip-link" href="#docsContent">跳到文档正文</a>
   <header class="docs-header">
-    <a class="docs-brand" href="/"><span class="docs-logo" aria-hidden="true"></span><strong>Codex Relay</strong><small>Docs</small></a>
+    <a class="docs-brand" href="/"><span class="docs-logo" aria-hidden="true"></span><strong>Codex Transfer</strong><small>Docs</small></a>
     <label class="docs-search"><span>搜索</span><input id="docsSearch" type="search" placeholder="搜索原理、Fork、归档、恢复或安装" aria-label="搜索文档"></label>
     <div class="docs-header-actions">
       <label class="theme-control"><span>主题</span><select id="themeSelect" aria-label="界面主题"><option value="graphite">石墨</option><option value="cloud">云白</option><option value="contrast">高对比</option></select></label>
@@ -41,7 +41,7 @@
       <article id="overview" data-doc-section data-keywords="overview session provider fork move">
         <p class="docs-eyebrow">AUDITED SESSION OPERATIONS</p>
         <h1>理解 Session，再安全地改变它</h1>
-        <p class="docs-lead">Codex Relay 管理本机及 Codex Desktop 当前连接主机上的 Session。它优先保留原始数据，所有写操作都经过预检、快照、审计和结果验证。</p>
+        <p class="docs-lead">Codex Transfer 管理本机及 Codex Desktop 当前连接主机上的 Session。它优先保留原始数据，所有写操作都经过预检、快照、审计和结果验证。</p>
         <div class="docs-callout safe"><strong>默认选择 Fork</strong><p>Fork 创建独立 thread，原 Session 不变。只有明确需要改变原会话归属时才使用移动。</p></div>
       </article>
 
@@ -52,7 +52,7 @@
           <span>rollout JSONL</span><b>+</b><span>SQLite thread</span><b>→</b><span>预检与快照</span><b>→</b><span>Fork 或移动</span><b>→</b><span>哈希验证</span>
         </div>
         <h3>Provider 标识不等于凭据</h3>
-        <p><code>model_provider</code> 是路由和列表分桶标识。API Key、OAuth、Base URL 与模型映射存在于独立配置中，Codex Relay 从不复制或备份它们。</p>
+        <p><code>model_provider</code> 是路由和列表分桶标识。API Key、OAuth、Base URL 与模型映射存在于独立配置中，Codex Transfer 从不复制或备份它们。</p>
         <div class="docs-callout safe"><strong>大列表按需读取</strong><p>工作台首屏只读取 Session 摘要，超长标题会截断；将鼠标停在卡片上或点开详情后，才会读取完整标题。选择 Session 时只更新相关卡片和队列，不会重新创建整个网格。</p></div>
       </article>
 
@@ -68,7 +68,7 @@
 
       <article id="fork" data-doc-section data-keywords="fork provider app server source preserve branch">
         <h2>Fork 到另一个 Provider</h2>
-        <p>Fork 使用 Codex 官方 <code>thread/fork</code> interface，并传入目标 <code>modelProvider</code>。Codex 负责历史复制、lineage、新 thread ID、rollout 与索引写入，Relay 负责前后快照、风险确认和审计。</p>
+        <p>Fork 使用 Codex 官方 <code>thread/fork</code> interface，并传入目标 <code>modelProvider</code>。Codex 负责历史复制、lineage、新 thread ID、rollout 与索引写入，Codex Transfer 负责前后快照、风险确认和审计。</p>
         <ol><li>确认源 Session 未被写入。</li><li>备份源 rollout 与一致性 SQLite 快照。</li><li>启动同一 <code>CODEX_HOME</code> 的短生命周期 app-server。</li><li>调用 <code>thread/fork</code>，验证新 thread 的 Provider 与路径。</li><li>记录新 rollout 哈希；未发生变化前允许撤销。</li></ol>
         <div class="docs-callout warning"><strong>批量 Fork 不是原子事务</strong><p>多选后会逐条调用 <code>thread/fork</code>。每条都有独立备份和审计；中途失败时已完成的 Fork 会保留，剩余条目停止执行，需要在操作记录中逐条核对或恢复。</p></div>
         <div class="docs-callout warning"><strong>Fork 不是格式转换</strong><p>它保留历史中的 <code>encrypted_content</code>。目标后端仍可能无法解密，但源 Session 不受影响。</p></div>
@@ -82,19 +82,19 @@
 
       <article id="cross-host" data-doc-section data-keywords="ssh remote host desktop transfer fork path 跨主机 远程">
         <h2>跨主机 Fork 与 Move</h2>
-        <p>Relay 从本机进程树中识别由 Codex/ChatGPT Desktop 直接启动、命令包含 <code>codex app-server proxy</code> 的 SSH 连接。只把这些已打开且可免密登录的别名列入主机清单，不会扫描任意 SSH config。</p>
-        <ol><li>从来源主机读取并检查 rollout、writer lock 与 SQLite 完整性。</li><li>在本机审计目录保存来源 rollout 和两端一致性数据库快照。</li><li>把 rollout 暂存到目标 <code>CODEX_HOME/imports/codex-relay</code>。</li><li>启动与 Desktop proxy 隔离的远端 app-server，通过实验性 <code>thread/fork.path</code> 创建新 Session ID。</li><li>验证目标 Provider、rollout 和索引；Move 只有在全部验证成功后才归档来源。</li></ol>
+        <p>Codex Transfer 从本机进程树中识别由 Codex/ChatGPT Desktop 直接启动、命令包含 <code>codex app-server proxy</code> 的 SSH 连接。只把这些已打开且可免密登录的别名列入主机清单，不会扫描任意 SSH config。</p>
+        <ol><li>从来源主机读取并检查 rollout、writer lock 与 SQLite 完整性。</li><li>在本机审计目录保存来源 rollout 和两端一致性数据库快照。</li><li>把 rollout 暂存到目标 <code>CODEX_HOME/imports/codex-transfer</code>。</li><li>启动与 Desktop proxy 隔离的远端 app-server，通过实验性 <code>thread/fork.path</code> 创建新 Session ID。</li><li>验证目标 Provider、rollout 和索引；Move 只有在全部验证成功后才归档来源。</li></ol>
         <div class="docs-callout warning"><strong>凭据不会随 Session 传输</strong><p>API Key、OAuth、Base URL、模型别名和 Provider 配置必须提前在目标主机独立设置。目标 Project 必须是目标主机上已经存在的绝对路径。</p></div>
         <div class="docs-callout warning"><strong>这是实验性 Codex 接口</strong><p><code>thread/fork.path</code> 可能随 Codex 版本变化。两端版本不兼容时预检或导入会失败；保留审计快照，先 Fork 验证，再考虑 Move。</p></div>
       </article>
 
       <article id="archive" data-doc-section data-keywords="archive unarchive active lock writer visibility 归档 使用中">
         <h2>归档与还原归档</h2>
-        <p>Relay 调用 Codex 官方 <code>thread/archive</code> 与 <code>thread/unarchive</code>。归档只改变默认列表中的可见状态，不删除聊天历史，也不改变 Provider；Codex 可能同时移动 rollout 并更新 SQLite 路径，因此每条操作仍会先备份两者。</p>
+        <p>Codex Transfer 调用 Codex 官方 <code>thread/archive</code> 与 <code>thread/unarchive</code>。归档只改变默认列表中的可见状态，不删除聊天历史，也不改变 Provider；Codex 可能同时移动 rollout 并更新 SQLite 路径，因此每条操作仍会先备份两者。</p>
         <ol><li>关闭准备操作的 Codex 任务。</li><li>选择“归档”或“还原归档”，可跨 Provider 多选。</li><li>检查 writer lock、当前归档状态和数据库完整性。</li><li>输入 <code>ARCHIVE</code> 或 <code>UNARCHIVE</code>。</li><li>每条 Session 独立执行、验证并写入审计。</li></ol>
         <div class="docs-callout warning"><strong>批量归档不是原子事务</strong><p>中途失败时，已完成条目会保留，后续条目停止。每条都有独立快照，可以从操作记录定位恢复依据。</p></div>
         <h3>如何判断 Session 正在使用</h3>
-        <p>Relay 检查 <code>thread-writer-locks/&lt;session-id&gt;.lock</code>，并尝试取得非阻塞独占锁。拿不到锁说明其他 Codex 进程拥有写权限，此时所有修改都会被阻断；能取得锁则说明即使锁文件存在，它当前也没有被持有。</p>
+        <p>Codex Transfer 检查 <code>thread-writer-locks/&lt;session-id&gt;.lock</code>，并尝试取得非阻塞独占锁。拿不到锁说明其他 Codex 进程拥有写权限，此时所有修改都会被阻断；能取得锁则说明即使锁文件存在，它当前也没有被持有。</p>
         <p>这是写入安全信号，不是最近活跃度。空闲 UI 标签页可能仍开着但没有持锁；更新时间和进程名都不能可靠证明独占写状态。</p>
       </article>
 
@@ -107,24 +107,24 @@
 
       <article id="risk" data-doc-section data-keywords="risk encrypted_content credential mixed trace provenance">
         <h2>风险模型</h2>
-        <table><thead><tr><th>风险</th><th>为什么发生</th><th>Relay 的处理</th></tr></thead><tbody>
+        <table><thead><tr><th>风险</th><th>为什么发生</th><th>Codex Transfer 的处理</th></tr></thead><tbody>
           <tr><td>加密推理不可移植</td><td>后端生成不透明 <code>encrypted_content</code></td><td>计数并在确认时告警</td></tr>
           <tr><td>目标凭据缺失</td><td>Provider 标签不携带认证</td><td>不接触密钥，要求独立配置</td></tr>
           <tr><td>混合来源不可追溯</td><td>没有可靠的逐轮 Provider 字段</td><td>明确提示，禁止声称无损恢复</td></tr>
-          <tr><td>并发写入</td><td>Codex 与 Relay 同时修改状态</td><td>尝试非阻塞独占 writer lock，失败即阻断</td></tr>
+          <tr><td>并发写入</td><td>Codex 与 Codex Transfer 同时修改状态</td><td>尝试非阻塞独占 writer lock，失败即阻断</td></tr>
           <tr><td>恢复覆盖新聊天</td><td>操作后状态已经分叉</td><td>比较哈希并阻断自动恢复</td></tr>
         </tbody></table>
       </article>
 
-      <article id="install" data-doc-section data-keywords="install terminal command csm codex relay python">
+      <article id="install" data-doc-section data-keywords="install terminal command ct codex transfer python">
         <h2>安装与启动</h2>
         <pre><code>./install.sh
-codex-relay
+codex-transfer
 
 # 短命令
-csm</code></pre>
-        <p>安装器要求 Python 3.11+，创建隔离环境，并在 <code>~/.local/bin</code> 提供两个命令。它不会覆盖同名普通文件。默认服务地址为 <code>http://127.0.0.1:8765</code>。</p>
-        <pre><code>codex-relay \
+ct</code></pre>
+        <p>安装器要求 Python 3.11+，创建隔离环境，并在 <code>~/.local/bin</code> 提供两个命令。它不会覆盖同名普通文件，也不会删除旧名称下的备份。默认服务地址为 <code>http://127.0.0.1:8765</code>。</p>
+        <pre><code>codex-transfer \
   --codex-home /path/to/.codex \
   --data-dir /private/backup/path \
   --codex-bin /path/to/codex \
@@ -133,7 +133,7 @@ csm</code></pre>
 
       <article id="limits" data-doc-section data-keywords="limits remote project schema signature">
         <h2>能力边界</h2>
-        <ul><li>Codex 本地存储和实验性 app-server 字段可能随版本变化，未知结构应当拒绝写入。</li><li>只能发现本机 Desktop 当前打开的 SSH proxy；仅在远端启动的 relay 无法反向暴露主机。</li><li>跨主机操作创建新的目标 Session ID；它不会让 CLI 创建的 Session 自动归属到 Desktop 的远程 Project 元数据。</li><li>哈希链可检测意外修改，但不是签名，拥有文件写权限的攻击者可以重写日志与备份。</li><li>备份包含完整聊天和工具输出，应存放在私密磁盘并纳入用户自己的保留策略。</li></ul>
+        <ul><li>Codex 本地存储和实验性 app-server 字段可能随版本变化，未知结构应当拒绝写入。</li><li>只能发现本机 Desktop 当前打开的 SSH proxy；仅在远端启动的辅助进程无法反向暴露主机。</li><li>跨主机操作创建新的目标 Session ID；它不会让 CLI 创建的 Session 自动归属到 Desktop 的远程 Project 元数据。</li><li>哈希链可检测意外修改，但不是签名，拥有文件写权限的攻击者可以重写日志与备份。</li><li>备份包含完整聊天和工具输出，应存放在私密磁盘并纳入用户自己的保留策略。</li></ul>
       </article>
 
       <p class="docs-empty" id="docsEmpty" hidden>没有匹配的文档内容。</p>

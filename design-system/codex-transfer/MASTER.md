@@ -6,7 +6,7 @@
 
 ---
 
-**Project:** Codex Session Manager
+**Project:** Codex Transfer
 **Generated:** 2026-08-18 16:54:06
 **Category:** Developer Tool / IDE
 **Design Dials:** Variance 5/10 (Balanced / Modern) | Motion 4/10 (Standard) | Density 8/10 (Dense / Dashboard)

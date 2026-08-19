@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from codex_session_manager.app_server import ForkResult
-from codex_session_manager.audit import AuditStore
-from codex_session_manager.engine import MigrationEngine, MigrationError
-from codex_session_manager.repository import CodexRepository
+from codex_transfer.app_server import ForkResult
+from codex_transfer.audit import AuditStore
+from codex_transfer.engine import MigrationEngine, MigrationError
+from codex_transfer.repository import CodexRepository
 
 try:
     import fcntl

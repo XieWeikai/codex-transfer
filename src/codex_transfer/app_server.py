@@ -166,8 +166,8 @@ class CodexAppServer:
                     "id": 1,
                     "params": {
                         "clientInfo": {
-                            "name": "codex_session_manager",
-                            "title": "Codex Relay",
+                            "name": "codex_transfer",
+                            "title": "Codex Transfer",
                             "version": __version__,
                         },
                         "capabilities": {

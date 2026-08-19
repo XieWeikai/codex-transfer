@@ -1,8 +1,8 @@
-# Contributing to Codex Relay
+# Contributing to Codex Transfer
 
 English | [简体中文](CONTRIBUTING_ZH.md)
 
-Thank you for helping improve Codex Relay. This project edits sensitive local state, so correctness, recoverability, and a narrow scope matter more than the size of a change.
+Thank you for helping improve Codex Transfer. This project edits sensitive local state, so correctness, recoverability, and a narrow scope matter more than the size of a change.
 
 By participating, you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not through a public issue.
 
@@ -25,8 +25,8 @@ Requirements:
 - Codex CLI for manual Fork integration testing
 
 ```bash
-git clone https://github.com/XieWeikai/codex-session-manager.git
-cd codex-session-manager
+git clone https://github.com/XieWeikai/codex-transfer.git
+cd codex-transfer
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
@@ -34,7 +34,7 @@ python3 -m venv .venv
 Run the application against a disposable Codex home whenever possible:
 
 ```bash
-.venv/bin/codex-relay \
+.venv/bin/codex-transfer \
   --codex-home /path/to/disposable/.codex \
   --data-dir /path/to/disposable/backups \
   --port 8765
@@ -69,7 +69,7 @@ Run these before submitting a pull request:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
-node --check src/codex_session_manager/static/app.js
+node --check src/codex_transfer/static/app.js
 git diff --check
 ```
 

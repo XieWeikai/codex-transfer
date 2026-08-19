@@ -5,9 +5,9 @@ import json
 import unittest
 from pathlib import Path
 
-from codex_session_manager.cli import execute_command, main, parser
-from codex_session_manager.engine import MigrationError
-from codex_session_manager.model import Session
+from codex_transfer.cli import execute_command, main, parser
+from codex_transfer.engine import MigrationError
+from codex_transfer.model import Session
 
 
 def session(

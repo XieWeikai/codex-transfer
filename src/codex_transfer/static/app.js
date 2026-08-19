@@ -34,16 +34,16 @@ function applyTheme(theme) {
   const allowed = ["graphite", "cloud", "contrast"];
   const selected = allowed.includes(theme) ? theme : "graphite";
   document.documentElement.dataset.theme = selected;
-  localStorage.setItem("codex-relay-theme", selected);
+  localStorage.setItem("codex-transfer-theme", selected);
   if ($("#themeSelect")) $("#themeSelect").value = selected;
 }
 
-applyTheme(localStorage.getItem("codex-relay-theme") || "graphite");
+applyTheme(localStorage.getItem("codex-transfer-theme") || "graphite");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: {"Content-Type": "application/json", "X-CSM-Token": token, ...(options.headers || {})},
+    headers: {"Content-Type": "application/json", "X-Codex-Transfer-Token": token, ...(options.headers || {})},
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);

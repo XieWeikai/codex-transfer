@@ -1,18 +1,18 @@
 ---
-name: codex-relay
-description: Inspect, filter, preflight, fork, move, archive, unarchive, restore, and audit Codex sessions across local and Desktop-connected SSH hosts with the Codex Relay CLI.
+name: codex-transfer
+description: Inspect, filter, preflight, fork, move, archive, unarchive, restore, and audit Codex sessions across local and Desktop-connected SSH hosts with the Codex Transfer CLI.
 ---
 
-# Codex Relay CLI
+# Codex Transfer CLI
 
-Use the installed `codex-relay` command, or its `csm` alias, to operate through the same migration engine as the Web UI.
+Use the installed `codex-transfer` command, or its `ct` alias, to operate through the same migration engine as the Web UI.
 
 ## Establish the command
 
 Check availability without modifying state:
 
 ```bash
-command -v codex-relay || command -v csm
+command -v codex-transfer || command -v ct
 ```
 
 If neither exists, report that installation is required. When working in this repository, the user can run `./install.sh`. Do not install or alter `CODEX_HOME` without authorization.
@@ -24,20 +24,20 @@ Use `--json` for every non-server command so IDs, risks, and failures remain mac
 Run the narrowest useful command:
 
 ```bash
-codex-relay status --json
-codex-relay hosts --json
-codex-relay sessions --json
-codex-relay sessions --host HOST_ID --json
-codex-relay sessions --provider PROVIDER --project /exact/project/path --status ready --json
-codex-relay sessions --search QUERY --sort newest --json
-codex-relay operations --limit 20 --json
+codex-transfer status --json
+codex-transfer hosts --json
+codex-transfer sessions --json
+codex-transfer sessions --host HOST_ID --json
+codex-transfer sessions --provider PROVIDER --project /exact/project/path --status ready --json
+codex-transfer sessions --search QUERY --sort newest --json
+codex-transfer operations --limit 20 --json
 ```
 
 Valid session statuses are `all`, `ready`, `locked`, and `archived`. Valid sorts are `newest`, `oldest`, `title`, and `size`.
 
 Never guess a Session ID, operation ID, source Provider, or target Provider. Resolve them from read-only output and ask the user when more than one target matches.
 
-For cross-host work, use only host IDs returned by `hosts`. The target Project must be an existing absolute path on the target host. Relay never copies credentials or Provider configuration.
+For cross-host work, use only host IDs returned by `hosts`. The target Project must be an existing absolute path on the target host. Codex Transfer never copies credentials or Provider configuration.
 
 ## Mutation safety gate
 
@@ -61,12 +61,12 @@ A session with `locked: true` currently has a held Codex writer lock and must no
 Prefer Fork when the source Session matters. Repeat `--session` for a batch.
 
 ```bash
-codex-relay fork-preview \
+codex-transfer fork-preview \
   --session SESSION_ID \
   --target TARGET_PROVIDER \
   --json
 
-codex-relay fork \
+codex-transfer fork \
   --session SESSION_ID \
   --target TARGET_PROVIDER \
   --acknowledge FORK \
@@ -80,13 +80,13 @@ Batch Fork is not atomic. Completed forks remain if a later item fails. Read `co
 Move rewrites the original Session. All selected Sessions must belong to the same source Provider.
 
 ```bash
-codex-relay move-preview \
+codex-transfer move-preview \
   --session SESSION_ID \
   --source SOURCE_PROVIDER \
   --target TARGET_PROVIDER \
   --json
 
-codex-relay move \
+codex-transfer move \
   --session SESSION_ID \
   --source SOURCE_PROVIDER \
   --target TARGET_PROVIDER \
@@ -101,7 +101,7 @@ Stop active Codex tasks before previewing. Never edit rollout JSONL or SQLite di
 Add all three routing options to the normal Fork or Move command:
 
 ```bash
-codex-relay fork-preview --session SESSION_ID \
+codex-transfer fork-preview --session SESSION_ID \
   --source-host SOURCE_HOST --target-host TARGET_HOST \
   --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
 ```
@@ -113,8 +113,8 @@ Cross-host import uses experimental `thread/fork.path`. Prefer Fork. Cross-host 
 Resolve the operation from `operations`, then preview it:
 
 ```bash
-codex-relay restore-preview --operation OPERATION_ID --json
-codex-relay restore --operation OPERATION_ID --acknowledge RESTORE --json
+codex-transfer restore-preview --operation OPERATION_ID --json
+codex-transfer restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
 Do not restore when the preview reports divergence. Restore can remove later conversation data; a Fork undo deletes the forked thread and rollout. When blocked, preserve the current state and report the changed paths without attempting a destructive workaround.
@@ -124,11 +124,11 @@ Do not restore when the preview reports divergence. Restore can remove later con
 Archive changes default-list visibility without deleting history or changing Provider. Use the matching preview immediately before the write:
 
 ```bash
-codex-relay archive-preview --session SESSION_ID --json
-codex-relay archive --session SESSION_ID --acknowledge ARCHIVE --json
+codex-transfer archive-preview --session SESSION_ID --json
+codex-transfer archive --session SESSION_ID --acknowledge ARCHIVE --json
 
-codex-relay unarchive-preview --session SESSION_ID --json
-codex-relay unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+codex-transfer unarchive-preview --session SESSION_ID --json
+codex-transfer unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
 ```
 
 Repeat `--session` for multiple sessions. Archive batches are not atomic: report `completed` and `failed` precisely and do not retry completed items. Codex may move the rollout while changing archive state; never move it manually or update the SQLite `archived` field directly.
@@ -138,8 +138,8 @@ Repeat `--session` for multiple sessions. Archive batches are not atomic: report
 After a successful write, run:
 
 ```bash
-codex-relay operations --limit 1 --json
-codex-relay sessions --search SESSION_ID --json
+codex-transfer operations --limit 1 --json
+codex-transfer sessions --search SESSION_ID --json
 ```
 
 Report the operation ID, source and resulting Session IDs, target Provider, backup/audit status, warnings, and any remaining manual verification. Never print credentials or full Session contents.

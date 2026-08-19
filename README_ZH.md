@@ -1,6 +1,6 @@
 <div align="center">
 
-# Codex Relay
+# Codex Transfer
 
 **在不同 Provider 与 Codex Desktop 已连接主机之间移动或 Fork Session，同时保留完整追溯能力。**
 
@@ -13,14 +13,14 @@
 
 </div>
 
-Codex Relay 是一个本地 Web 工作台，用于查看 Codex Session，并安全地改变其 Provider 归属。每次写操作都会先执行预检和完整备份，写入可检测篡改的审计链，并在恢复前通过操作后哈希检查状态是否已经分叉。
+Codex Transfer 是一个本地 Web 工作台，用于查看 Codex Session，并安全地改变其 Provider 归属。每次写操作都会先执行预检和完整备份，写入可检测篡改的审计链，并在恢复前通过操作后哈希检查状态是否已经分叉。
 
 > [!CAUTION]
 > Provider 标识不是凭据，Session 历史也不具备普遍可移植性。加密推理、模型专属状态、工具以及混合 Provider 来源都可能无法随迁移保留。重要 Session 应优先使用 **Fork**。
 
-## 为什么需要 Codex Relay？
+## 为什么需要 Codex Transfer？
 
-移动 Codex Session 并不是简单地重命名文件。当前 Codex 会同时使用 rollout JSONL 元数据与 SQLite thread 索引来发现 Session。只修改其中一处，可能导致状态不一致或 Session 消失。Codex Relay 将其设计为可恢复的操作流程，而不是一次文本替换。
+移动 Codex Session 并不是简单地重命名文件。当前 Codex 会同时使用 rollout JSONL 元数据与 SQLite thread 索引来发现 Session。只修改其中一处，可能导致状态不一致或 Session 消失。Codex Transfer 将其设计为可恢复的操作流程，而不是一次文本替换。
 
 | 能力 | 说明 |
 |---|---|
@@ -52,7 +52,7 @@ Codex home
 - **归档 / 还原归档**调用 Codex app-server 的 `thread/archive` 与 `thread/unarchive`；只改变可见状态，不改变聊天历史或 Provider。
 - **恢复** 本身也是一次新的审计操作。只有当前哈希仍与记录的操作后状态一致时才会执行。
 
-Codex Relay 不会复制或保存 API Key、OAuth 状态、Provider 定义、Base URL、模型别名或其他凭据。
+Codex Transfer 不会复制或保存 API Key、OAuth 状态、Provider 定义、Base URL、模型别名或其他凭据。
 
 ## 快速开始
 
@@ -66,13 +66,15 @@ Codex Relay 不会复制或保存 API Key、OAuth 状态、Provider 定义、Bas
 ### 安装
 
 ```bash
-git clone https://github.com/XieWeikai/codex-session-manager.git
-cd codex-session-manager
+git clone https://github.com/XieWeikai/codex-transfer.git
+cd codex-transfer
 ./install.sh
-codex-relay
+codex-transfer
 ```
 
-安装器会在 `~/.local/share/codex-relay` 下创建隔离环境，并在 `~/.local/bin` 中提供 `codex-relay` 和 `csm`。它还会把 Codex Agent Skill 安装到 `~/.agents/skills`，把 Claude Code Skill 安装到 `~/.claude/skills`。遇到同名普通文件或 Skill 目录时绝不会覆盖。
+安装器会在 `~/.local/share/codex-transfer` 下创建隔离环境，并在 `~/.local/bin` 中提供 `codex-transfer` 和 `ct`。它还会把 Codex Agent Skill 安装到 `~/.agents/skills`，把 Claude Code Skill 安装到 `~/.claude/skills`。遇到同名普通文件或 Skill 目录时绝不会覆盖。
+
+从旧项目名升级时，安装器只会移除指向旧安装目录的命令与 Skill 符号链接，不会删除旧安装或任何备份。需要查看旧审计历史时，可显式传入 `--data-dir ~/.codex-session-manager`。
 
 启动后打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。
 
@@ -81,13 +83,13 @@ codex-relay
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/codex-relay
+.venv/bin/codex-transfer
 ```
 
 指定自定义位置与端口：
 
 ```bash
-codex-relay \
+codex-transfer \
   --codex-home /path/to/.codex \
   --data-dir /path/to/private/backups \
   --codex-bin /path/to/codex \
@@ -96,7 +98,7 @@ codex-relay \
 
 ## CLI
 
-不带子命令运行 `codex-relay` 或 `csm` 时仍会启动 Web UI。CLI 为终端和 Agent 提供与 Web UI 相同的 engine 操作：
+不带子命令运行 `codex-transfer` 或 `ct` 时仍会启动 Web UI。CLI 为终端和 Agent 提供与 Web UI 相同的 engine 操作：
 
 | 命令 | 用途 |
 |---|---|
@@ -114,39 +116,39 @@ codex-relay \
 使用 `--json` 获取机器可读输出；重复 `--session` 可以多选：
 
 ```bash
-csm hosts --json
-csm sessions --host A100-1 --provider openai --project /path/to/project --status ready --json
+ct hosts --json
+ct sessions --host A100-1 --provider openai --project /path/to/project --status ready --json
 
-csm fork-preview --session SESSION_ID --target TARGET_PROVIDER --json
-csm fork --session SESSION_ID --target TARGET_PROVIDER --acknowledge FORK --json
+ct fork-preview --session SESSION_ID --target TARGET_PROVIDER --json
+ct fork --session SESSION_ID --target TARGET_PROVIDER --acknowledge FORK --json
 
-csm fork-preview --session SESSION_ID --source-host A100-1 --target-host local \
+ct fork-preview --session SESSION_ID --source-host A100-1 --target-host local \
   --target TARGET_PROVIDER --target-cwd /absolute/target/project --json
-csm fork --session SESSION_ID --source-host A100-1 --target-host local \
+ct fork --session SESSION_ID --source-host A100-1 --target-host local \
   --target TARGET_PROVIDER --target-cwd /absolute/target/project --acknowledge FORK --json
 
-csm move-preview --session SESSION_ID --source SOURCE --target TARGET --json
-csm move --session SESSION_ID --source SOURCE --target TARGET \
+ct move-preview --session SESSION_ID --source SOURCE --target TARGET --json
+ct move --session SESSION_ID --source SOURCE --target TARGET \
   --acknowledge MIGRATE --json
 
-csm archive-preview --session SESSION_ID --json
-csm archive --session SESSION_ID --acknowledge ARCHIVE --json
-csm unarchive-preview --session SESSION_ID --json
-csm unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
+ct archive-preview --session SESSION_ID --json
+ct archive --session SESSION_ID --acknowledge ARCHIVE --json
+ct unarchive-preview --session SESSION_ID --json
+ct unarchive --session SESSION_ID --acknowledge UNARCHIVE --json
 
-csm restore-preview --operation OPERATION_ID --json
-csm restore --operation OPERATION_ID --acknowledge RESTORE --json
+ct restore-preview --operation OPERATION_ID --json
+ct restore --operation OPERATION_ID --acknowledge RESTORE --json
 ```
 
 预检命令不会写入 Session 状态。写命令会重新执行预检，创建与 Web UI 完全相同的备份和审计记录，并要求相同的明确确认词。
 
-当 Relay 无法对 `thread-writer-locks/<session-id>.lock` 取得非阻塞独占锁时，Session 会显示为“使用中”。这是写入安全信号，不是“最近是否活跃”的推测：一个空闲 UI 标签页可能已打开但没有持锁，而只要 writer lock 被持有，所有写操作都会被阻断。
+当 Codex Transfer 无法对 `thread-writer-locks/<session-id>.lock` 取得非阻塞独占锁时，Session 会显示为“使用中”。这是写入安全信号，不是“最近是否活跃”的推测：一个空闲 UI 标签页可能已打开但没有持锁，而只要 writer lock 被持有，所有写操作都会被阻断。
 
 ### Agent Skills
 
-仓库同时提供 [Codex Skill](.agents/skills/codex-relay/SKILL.md) 和 [Claude Code Skill](.claude/skills/codex-relay/SKILL.md)。它们要求 Agent 先用只读 JSON 命令发现 ID，每次写入前进行预检，遇到 critical 风险立即停止，并在操作后验证结果。
+仓库同时提供 [Codex Skill](.agents/skills/codex-transfer/SKILL.md) 和 [Claude Code Skill](.claude/skills/codex-transfer/SKILL.md)。它们要求 Agent 先用只读 JSON 命令发现 ID，每次写入前进行预检，遇到 critical 风险立即停止，并在操作后验证结果。
 
-Agent 在本仓库工作时会自动加载项目级 Skill；`./install.sh` 还会将其安装到用户级目录。可以使用 `CODEX_RELAY_CODEX_SKILLS_DIR` 或 `CODEX_RELAY_CLAUDE_SKILLS_DIR` 修改目标位置。
+Agent 在本仓库工作时会自动加载项目级 Skill；`./install.sh` 还会将其安装到用户级目录。可以使用 `CODEX_TRANSFER_CODEX_SKILLS_DIR` 或 `CODEX_TRANSFER_CLAUDE_SKILLS_DIR` 修改目标位置。
 
 ## 推荐操作流程
 
@@ -161,7 +163,7 @@ Agent 在本仓库工作时会自动加载项目级 Skill；`./install.sh` 还�
 
 ## 安全模型
 
-Codex Relay 是一个同用户、本地运行的管理工具：
+Codex Transfer 是一个同用户、本地运行的管理工具：
 
 - HTTP 服务只接受 `127.0.0.1` 或 `localhost`。
 - 写请求必须携带嵌入本地页面的每进程随机令牌。
@@ -176,8 +178,8 @@ Codex Relay 是一个同用户、本地运行的管理工具：
 ## 已知限制
 
 - Codex 本地存储不是稳定的公开 API；程序会拒绝修改未知 schema。
-- 跨主机导入依赖实验性的 `thread/fork.path`；两端 CLI 版本不兼容时可能拒绝请求。Relay 会保留两端快照，但无法保证未来协议兼容性。
-- 只识别由本机 Codex/ChatGPT Desktop 直接启动的 SSH proxy；不会枚举任意 SSH config 主机，也无法发现仅在远端启动的 relay。
+- 跨主机导入依赖实验性的 `thread/fork.path`；两端 CLI 版本不兼容时可能拒绝请求。Codex Transfer 会保留两端快照，但无法保证未来协议兼容性。
+- 只识别由本机 Codex/ChatGPT Desktop 直接启动的 SSH proxy；不会枚举任意 SSH config 主机，也无法发现仅在远端启动的辅助进程。
 - Provider 迁移改变的是路由与发现分桶，不会转换后端协议。
 - 不透明的 `encrypted_content` 在其他后端可能无法继续使用。
 - 历史 rollout 没有可靠记录每一轮对应的 Provider，无法自动重建混合 Provider 来源。
@@ -201,14 +203,14 @@ Codex Relay 是一个同用户、本地运行的管理工具：
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
-node --check src/codex_session_manager/static/app.js
+node --check src/codex_transfer/static/app.js
 ```
 
 欢迎提交能保持备份、审计和恢复不变量的贡献。开始之前请阅读[贡献指南](CONTRIBUTING_ZH.md)和[行为准则](CODE_OF_CONDUCT_ZH.md)。
 
 ## 许可证
 
-Codex Relay 使用 [MIT License](LICENSE)。[LICENSE_ZH.md](LICENSE_ZH.md) 是便于阅读的中文翻译；发生歧义时以英文原文为准。
+Codex Transfer 使用 [MIT License](LICENSE)。[LICENSE_ZH.md](LICENSE_ZH.md) 是便于阅读的中文翻译；发生歧义时以英文原文为准。
 
 ---
 

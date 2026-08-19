@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from codex_session_manager.model import Session
-from codex_session_manager.server import SessionManagerHandler
+from codex_transfer.model import Session
+from codex_transfer.server import CodexTransferHandler
 
 
 class StaticAssetsTest(unittest.TestCase):
@@ -29,19 +29,19 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertNotIn("db_path", summary)
 
     def test_assets_are_packaged(self) -> None:
-        self.assertIn(b"Codex Relay", SessionManagerHandler._static("index.html"))
-        self.assertIn(b"/api/workspace", SessionManagerHandler._static("app.js"))
-        self.assertIn(b"/api/hosts", SessionManagerHandler._static("app.js"))
-        self.assertIn(b"/api/preview", SessionManagerHandler._static("app.js"))
-        self.assertIn(b"/api/fork", SessionManagerHandler._static("app.js"))
-        self.assertIn(b"/api/archive", SessionManagerHandler._static("app.js"))
-        self.assertIn(b"/api/transfer", SessionManagerHandler._static("app.js"))
-        self.assertIn(b"thread/fork", SessionManagerHandler._static("docs.html"))
-        self.assertIn(b"codex-relay-theme", SessionManagerHandler._static("docs.js"))
+        self.assertIn(b"Codex Transfer", CodexTransferHandler._static("index.html"))
+        self.assertIn(b"/api/workspace", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"/api/hosts", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"/api/preview", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"/api/fork", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"/api/archive", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"/api/transfer", CodexTransferHandler._static("app.js"))
+        self.assertIn(b"thread/fork", CodexTransferHandler._static("docs.html"))
+        self.assertIn(b"codex-transfer-theme", CodexTransferHandler._static("docs.js"))
 
     def test_workbench_includes_drag_and_click_paths(self) -> None:
-        html = SessionManagerHandler._static("index.html")
-        script = SessionManagerHandler._static("app.js")
+        html = CodexTransferHandler._static("index.html")
+        script = CodexTransferHandler._static("app.js")
         self.assertIn("Fork 工作区".encode(), html)
         self.assertIn("确认 Fork 风险".encode(), html)
         self.assertIn("正在检查快照与当前状态".encode(), html)
@@ -56,13 +56,13 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn(b'id="sessionPopover"', html)
         self.assertIn(b"/api/forks/preview", script)
         self.assertIn(b"sessions.map", script)
-        self.assertIn(b"prefers-reduced-motion", SessionManagerHandler._static("styles.css"))
+        self.assertIn(b"prefers-reduced-motion", CodexTransferHandler._static("styles.css"))
         self.assertIn(b'data-action="fork"', html)
         self.assertIn(b'data-action="archive"', html)
         self.assertIn(b'data-action="unarchive"', html)
         self.assertIn(b'themeSelect', html)
         self.assertIn(b'row.addEventListener("dragstart"', script)
-        self.assertIn(b'user-select: none', SessionManagerHandler._static("styles.css"))
+        self.assertIn(b'user-select: none', CodexTransferHandler._static("styles.css"))
 
 
 if __name__ == "__main__":

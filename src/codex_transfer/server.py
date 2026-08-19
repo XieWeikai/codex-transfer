@@ -13,15 +13,15 @@ from .fleet import FleetError
 from .repository import RepositoryError
 
 
-class SessionManagerServer(ThreadingHTTPServer):
+class CodexTransferServer(ThreadingHTTPServer):
     def __init__(self, address, engine: MigrationEngine):
         self.engine = engine
         self.csrf_token = secrets.token_urlsafe(32)
-        super().__init__(address, SessionManagerHandler)
+        super().__init__(address, CodexTransferHandler)
 
 
-class SessionManagerHandler(BaseHTTPRequestHandler):
-    server: SessionManagerServer
+class CodexTransferHandler(BaseHTTPRequestHandler):
+    server: CodexTransferServer
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -62,7 +62,7 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
-            if self.headers.get("X-CSM-Token") != self.server.csrf_token:
+            if self.headers.get("X-Codex-Transfer-Token") != self.server.csrf_token:
                 self._error(HTTPStatus.FORBIDDEN, "Invalid request token")
                 return
             payload = self._body()
@@ -181,4 +181,4 @@ class SessionManagerHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _static(name: str) -> bytes:
-        return files("codex_session_manager.static").joinpath(name).read_bytes()
+        return files("codex_transfer.static").joinpath(name).read_bytes()

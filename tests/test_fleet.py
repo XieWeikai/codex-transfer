@@ -8,11 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from codex_session_manager.app_server import ForkResult
-from codex_session_manager.audit import AuditStore
-from codex_session_manager.fleet import DesktopSshDiscovery, HostDescriptor, HostFleet
-from codex_session_manager.model import Session
-from codex_session_manager.repository import CodexRepository
+from codex_transfer.app_server import ForkResult
+from codex_transfer.audit import AuditStore
+from codex_transfer.fleet import DesktopSshDiscovery, HostDescriptor, HostFleet
+from codex_transfer.model import Session
+from codex_transfer.repository import CodexRepository
 
 
 class FakeHost:
@@ -136,7 +136,7 @@ class FleetTest(unittest.TestCase):
 13 10 /usr/bin/ssh ordinary
 """
         with patch(
-            "codex_session_manager.fleet.subprocess.run",
+            "codex_transfer.fleet.subprocess.run",
             return_value=SimpleNamespace(stdout=process_table),
         ):
             self.assertEqual(DesktopSshDiscovery().aliases(), ["G1"])

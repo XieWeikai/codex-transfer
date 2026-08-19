@@ -907,7 +907,7 @@ class MigrationEngine:
         for entry in manifest.get("files", []):
             backup = operation_dir / entry["backup"]
             destination = Path(entry["source"])
-            temp = destination.with_name(f".{destination.name}.csm-restore.tmp")
+            temp = destination.with_name(f".{destination.name}.ct-restore.tmp")
             try:
                 shutil.copy2(backup, temp)
                 with temp.open("rb") as handle:

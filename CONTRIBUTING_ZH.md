@@ -1,8 +1,8 @@
-# 参与贡献 Codex Relay
+# 参与贡献 Codex Transfer
 
 [English](CONTRIBUTING.md) | 简体中文
 
-感谢你帮助改进 Codex Relay。本项目会修改敏感的本地状态，因此正确性、可恢复性和清晰的改动范围比改动规模更重要。
+感谢你帮助改进 Codex Transfer。本项目会修改敏感的本地状态，因此正确性、可恢复性和清晰的改动范围比改动规模更重要。
 
 参与项目即表示你同意遵守[行为准则](CODE_OF_CONDUCT_ZH.md)。安全漏洞必须按照 [SECURITY_ZH.md](SECURITY_ZH.md) 私下报告，不要创建公开 Issue。
 
@@ -25,8 +25,8 @@
 - 手动测试 Fork 集成时需要 Codex CLI
 
 ```bash
-git clone https://github.com/XieWeikai/codex-session-manager.git
-cd codex-session-manager
+git clone https://github.com/XieWeikai/codex-transfer.git
+cd codex-transfer
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
@@ -34,7 +34,7 @@ python3 -m venv .venv
 尽量使用一次性的 Codex home 运行应用：
 
 ```bash
-.venv/bin/codex-relay \
+.venv/bin/codex-transfer \
   --codex-home /path/to/disposable/.codex \
   --data-dir /path/to/disposable/backups \
   --port 8765
@@ -69,7 +69,7 @@ python3 -m venv .venv
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
-node --check src/codex_session_manager/static/app.js
+node --check src/codex_transfer/static/app.js
 git diff --check
 ```
 

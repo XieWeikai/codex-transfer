@@ -6,7 +6,7 @@ function applyDocsTheme(theme) {
   const allowed = ["graphite", "cloud", "contrast"];
   const selected = allowed.includes(theme) ? theme : "graphite";
   document.documentElement.dataset.theme = selected;
-  localStorage.setItem("codex-relay-theme", selected);
+  localStorage.setItem("codex-transfer-theme", selected);
   themeSelect.value = selected;
 }
 
@@ -32,7 +32,7 @@ function updateActiveNavigation() {
   });
 }
 
-applyDocsTheme(localStorage.getItem("codex-relay-theme") || "graphite");
+applyDocsTheme(localStorage.getItem("codex-transfer-theme") || "graphite");
 docsSearch.addEventListener("input", filterDocs);
 themeSelect.addEventListener("change", event => applyDocsTheme(event.target.value));
 document.addEventListener("scroll", updateActiveNavigation, {passive: true});

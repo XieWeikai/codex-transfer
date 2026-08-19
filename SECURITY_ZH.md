@@ -4,18 +4,18 @@
 
 ## 支持版本
 
-Codex Relay 目前处于 1.0 之前，安全更新仅支持最新版本。
+Codex Transfer 目前处于 1.0 之前，安全更新仅支持最新版本。
 
 | 版本 | 是否支持 |
 |---|---|
 | 最新 Release 与 `main` | 是 |
 | 更早版本 | 否 |
 
-存储兼容范围比安全支持范围更窄。即使 Codex Relay 本身仍受支持，也可能拒绝修改未知的未来 Codex schema。
+存储兼容范围比安全支持范围更窄。即使 Codex Transfer 本身仍受支持，也可能拒绝修改未知的未来 Codex schema。
 
 ## 威胁模型
 
-Codex Relay 是一个同用户、本地运行的管理工具。它读取 Codex rollout 与 SQLite 索引，并在用户明确确认后写入这些文件。它还会创建包含同类敏感数据的本地备份。
+Codex Transfer 是一个同用户、本地运行的管理工具。它读取 Codex rollout 与 SQLite 索引，并在用户明确确认后写入这些文件。它还会创建包含同类敏感数据的本地备份。
 
 Web 服务只绑定 loopback。本项目不运营云端服务、远程账户系统，也不与启动应用的操作系统用户进行权限隔离。已经能够完全访问该用户文件的进程通常位于信任边界之内。
 
@@ -48,23 +48,23 @@ Web 服务只绑定 loopback。本项目不运营云端服务、远程账户系�
 
 除非能与其他问题组合形成信任边界绕过，以下情况通常不在范围内：
 
-- 攻击者已经控制操作系统账户，并能任意修改 Codex 状态和 Codex Relay 备份。
+- 攻击者已经控制操作系统账户，并能任意修改 Codex 状态和 Codex Transfer 备份。
 - 用户主动选择恶意的 `--codex-bin`、Codex home 或备份目录。
 - Provider 停机、凭据被拒绝、模型不兼容，或无法解密后端生成的 `encrypted_content`。
 - 底层 Codex rollout 从未记录逐轮 Provider 来源，因此无法恢复该信息。
 - 仅影响用户本人 loopback 实例、且不造成数据损坏或边界逃逸的拒绝服务。
 - 没有在受支持版本上证明实际影响的自动扫描结果。
-- Codex Relay 已明确拒绝修改的不受支持 Codex schema。
+- Codex Transfer 已明确拒绝修改的不受支持 Codex schema。
 
 ## 报告漏洞
 
 **不要**通过公开 GitHub Issue、Discussion 或 Pull Request 报告安全漏洞。
 
-请使用 [GitHub 私密漏洞报告](https://github.com/XieWeikai/codex-session-manager/security/advisories/new)。如果该入口不可用，请通过仓库所有者 GitHub 个人资料中列出的私密方式联系，并请求安全报告渠道。
+请使用 [GitHub 私密漏洞报告](https://github.com/XieWeikai/codex-transfer/security/advisories/new)。如果该入口不可用，请通过仓库所有者 GitHub 个人资料中列出的私密方式联系，并请求安全报告渠道。
 
 报告应包含：
 
-- 受影响的 Codex Relay 版本与操作系统。
+- 受影响的 Codex Transfer 版本与操作系统。
 - 相关情况下受影响的 Codex 版本或存储 schema。
 - 不可信输入来源，以及它到达相关操作的完整路径。
 - 使用合成数据的最小复现步骤。

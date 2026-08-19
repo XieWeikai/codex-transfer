@@ -1,6 +1,6 @@
 # Workbench Page Overrides
 
-> **PROJECT:** Codex Session Manager
+> **PROJECT:** Codex Transfer
 > **Generated:** 2026-08-18 16:54:25
 > **Page Type:** Dashboard / Data View
 

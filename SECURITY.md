@@ -4,18 +4,18 @@ English | [简体中文](SECURITY_ZH.md)
 
 ## Supported versions
 
-Codex Relay is pre-1.0 software that follows a latest-version support policy.
+Codex Transfer is pre-1.0 software that follows a latest-version support policy.
 
 | Version | Supported |
 |---|---|
 | Latest release and `main` | Yes |
 | Older revisions | No |
 
-Storage compatibility is narrower than security support. A supported Codex Relay release may refuse to modify an unknown future Codex schema.
+Storage compatibility is narrower than security support. A supported Codex Transfer release may refuse to modify an unknown future Codex schema.
 
 ## Threat model
 
-Codex Relay is a same-user local administration tool. It reads and, after explicit confirmation, writes Codex rollout files and SQLite indexes. It also creates local backups containing the same sensitive data.
+Codex Transfer is a same-user local administration tool. It reads and, after explicit confirmation, writes Codex rollout files and SQLite indexes. It also creates local backups containing the same sensitive data.
 
 The web server binds only to loopback. There is no project-operated cloud service, remote account system, or privilege separation from the operating-system user who launches the application. A process that already has full access to that user's files is generally inside the trust boundary.
 
@@ -48,23 +48,23 @@ Examples of security issues that are in scope:
 
 The following are normally out of scope unless they form part of a larger trust-boundary bypass:
 
-- An attacker who already controls the operating-system account and can freely edit both Codex state and Codex Relay backups.
+- An attacker who already controls the operating-system account and can freely edit both Codex state and Codex Transfer backups.
 - The user explicitly choosing a malicious `--codex-bin`, Codex home, or backup directory.
 - Provider downtime, credential rejection, model incompatibility, or inability to decrypt backend-generated `encrypted_content`.
 - Loss of per-turn provider provenance that the underlying Codex rollout never recorded.
 - Denial of service against the user's own loopback instance without data corruption or boundary escape.
 - Automated scanner output without a reproducible impact on a supported revision.
-- Issues in unsupported Codex storage schemas that Codex Relay already refuses to modify.
+- Issues in unsupported Codex storage schemas that Codex Transfer already refuses to modify.
 
 ## Reporting a vulnerability
 
 Do **not** report vulnerabilities through public GitHub issues, discussions, or pull requests.
 
-Use [GitHub Private Vulnerability Reporting](https://github.com/XieWeikai/codex-session-manager/security/advisories/new). If that form is unavailable, contact the repository owner through a private method listed on their GitHub profile and request a secure reporting channel.
+Use [GitHub Private Vulnerability Reporting](https://github.com/XieWeikai/codex-transfer/security/advisories/new). If that form is unavailable, contact the repository owner through a private method listed on their GitHub profile and request a secure reporting channel.
 
 Include:
 
-- The affected Codex Relay revision and operating system.
+- The affected Codex Transfer revision and operating system.
 - The affected Codex version or storage schema when relevant.
 - The untrusted input source and complete path to the affected operation.
 - Minimal reproduction steps using synthetic data.

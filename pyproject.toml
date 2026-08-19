@@ -3,19 +3,18 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-session-manager"
+name = "codex-transfer"
 version = "0.5.0"
-description = "Codex Relay: auditable session moves and forks across providers and hosts"
+description = "Codex Transfer: auditable session moves and forks across providers and hosts"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Codex Session Manager contributors" }]
+authors = [{ name = "Codex Transfer contributors" }]
 dependencies = []
 
 [project.scripts]
-codex-session-manager = "codex_session_manager.cli:main"
-codex-relay = "codex_session_manager.cli:main"
-csm = "codex_session_manager.cli:main"
+codex-transfer = "codex_transfer.cli:main"
+ct = "codex_transfer.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -24,7 +23,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-codex_session_manager = ["static/*"]
+codex_transfer = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
