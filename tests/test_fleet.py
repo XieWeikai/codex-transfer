@@ -284,6 +284,14 @@ class FleetTest(unittest.TestCase):
         self.assertEqual(adapter.state_db_path, "/tmp/.codex/state_5.sqlite")
         self.assertEqual(calls, 1)
 
+    def test_ssh_commands_disable_inherited_forwarding_and_qos(self):
+        adapter = SshHostAdapter("test-host")
+
+        commands = (adapter._ssh_command("true"), adapter._ssh_command("true", tty=True))
+        for command in commands:
+            self.assertIn("ClearAllForwardings=yes", command)
+            self.assertIn("IPQoS=none", command)
+
     def test_cross_host_fork_preserves_source(self):
         plan = self.fleet.preview_transfer(
             ["session-1"], "source-host", "target-host", "target", "/target/project", False

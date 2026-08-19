@@ -273,6 +273,10 @@ json.dump(locked,sys.stdout)
         command.extend(
             [
                 "-o",
+                "ClearAllForwardings=yes",
+                "-o",
+                "IPQoS=none",
+                "-o",
                 "ConnectTimeout=6",
                 "-o",
                 "ServerAliveInterval=15",
